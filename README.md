@@ -85,7 +85,7 @@ Slash commands can be combined with ordinary filename text:
 - `/limit 100` returns at most 100 results, up to the limit configured in Settings.
 - `/not node_modules` excludes matching name or path text.
 - `invoice /or receipt` matches either side of `/or`.
-- `/filetype md` finds `.md` files; `/filetype doc docx` finds either extension.
+- `/filetype md` finds `.md` files; `/filetype doc,docx` finds either extension.
 - `/regex handoff\.md$` finds names ending in `handoff.md`; `\.` means a literal
   dot and `$` means the end of the name.
 
@@ -97,8 +97,10 @@ invoice /or receipt /modified 7d /type file
 package /not node_modules /in ~/Source
 ```
 
-`/filetype` accepts all following non-command values as extensions, so put ordinary
-filename text before it. `/regex` consumes everything after it and must be last.
+Every command except `/or` takes exactly one argument. Use commas for multiple file
+types, so `/filetype md marvel` means Markdown files matching `marvel`, while
+`/filetype md,markdown` accepts either extension. `/regex` consumes everything after
+it and must be last.
 
 Type `/` to see the available commands, then click one to insert it. Once the
 prefix identifies one command, press Tab to complete it (`/f` → `/filetype `).

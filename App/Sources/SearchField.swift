@@ -9,7 +9,7 @@ struct SearchField: View {
     }
 
     private static let slashCommands = [
-        SlashCommand(command: "/filetype", description: "EXT [EXT…] — match extensions"),
+        SlashCommand(command: "/filetype", description: "EXT[,EXT…] — match extensions"),
         SlashCommand(command: "/in", description: "~/Folder — restrict to a subtree"),
         SlashCommand(command: "/limit", description: "N — return at most N results"),
         SlashCommand(command: "/modified", description: "today, 7d, or DATE..DATE"),
@@ -75,7 +75,7 @@ struct SearchField: View {
                         }
                         if matchingSlashCommands.count == Self.slashCommands.count {
                             Divider()
-                            Text("Combine filters. Put text before /filetype; use /regex last.")
+                            Text("Each command takes one argument; comma-separate file types.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .padding(.horizontal, 12)

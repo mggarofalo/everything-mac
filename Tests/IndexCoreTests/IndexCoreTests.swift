@@ -4,7 +4,7 @@ import XCTest
 
 final class IndexCoreTests: XCTestCase {
     func testSlashCommandParsing() {
-        XCTAssertEqual(Query(text: "/filetype md docx").expression,
+        XCTAssertEqual(Query(text: "/filetype md,docx").expression,
                        .fileTypes(["md", "docx"]))
         XCTAssertEqual(Query(text: "/filetype .MD").expression,
                        .fileTypes(["MD"]))
@@ -14,6 +14,10 @@ final class IndexCoreTests: XCTestCase {
                        .regularExpression("report"))
         XCTAssertEqual(Query(text: "/regexical notes").expression,
                        .terms(["/regexical", "notes"]))
+        let composed = Query(text: "/filetype md marvel").plan
+        XCTAssertEqual(composed.fileTypes, ["md"])
+        XCTAssertEqual(composed.termGroups, [["marvel"]])
+        XCTAssertFalse(Query(text: "/filetype md,").plan.isValid)
     }
 
     func testFileTypeAndRegularExpressionSearch() {
@@ -34,10 +38,12 @@ final class IndexCoreTests: XCTestCase {
 
         XCTAssertEqual(engine.search(Query(text: "/filetype md"), in: store,
                                      componentIndex: index), [markdown, uppercase])
-        XCTAssertEqual(engine.search(Query(text: "/filetype doc md"), in: store,
+        XCTAssertEqual(engine.search(Query(text: "/filetype doc,md"), in: store,
                                      componentIndex: index), [markdown, uppercase])
-        XCTAssertEqual(engine.search(Query(text: "/filetype doc docx"), in: store,
+        XCTAssertEqual(engine.search(Query(text: "/filetype doc,docx"), in: store,
                                      componentIndex: index), [document])
+        XCTAssertEqual(engine.search(Query(text: "/filetype md handoff"), in: store,
+                                     componentIndex: index), [markdown])
         XCTAssertEqual(engine.search(Query(text: #"/regex ^handoff\.md$"#), in: store,
                                      componentIndex: index), [markdown])
         XCTAssertEqual(engine.search(Query(text: #"/regex .*handoff\.md$"#), in: store,
@@ -127,6 +133,10 @@ final class IndexCoreTests: XCTestCase {
         ), [handoff, proposal, archived])
         XCTAssertEqual(engine.search(
             Query(text: "handoff /not Archive /in /Users/me/Documents"),
+            in: store, componentIndex: index
+        ), [handoff])
+        XCTAssertEqual(engine.search(
+            Query(text: "/in /Users/me/Documents handoff /not Archive"),
             in: store, componentIndex: index
         ), [handoff])
         XCTAssertEqual(engine.search(

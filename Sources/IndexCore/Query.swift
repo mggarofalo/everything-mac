@@ -158,17 +158,14 @@ public struct Query: Sendable {
             let argument = tokens[index + 1]
             switch command {
             case "/filetype":
-                var extensions: [String] = []
-                var cursor = index + 1
-                while cursor < tokens.count, !slashCommands.contains(tokens[cursor].lowercased()) {
-                    let value = tokens[cursor].trimmingCharacters(in: CharacterSet(charactersIn: "."))
-                    if !value.isEmpty { extensions.append(value) }
-                    cursor += 1
+                let values = argument.split(separator: ",", omittingEmptySubsequences: false)
+                let extensions = values.map {
+                    String($0).trimmingCharacters(in: CharacterSet(charactersIn: "."))
                 }
                 plan.fileTypes.append(contentsOf: extensions)
-                if extensions.isEmpty { plan.isValid = false }
-                index = cursor
-                continue
+                if extensions.isEmpty || extensions.contains(where: { $0.isEmpty }) {
+                    plan.isValid = false
+                }
             case "/in":
                 let path = expandPath(argument)
                 if path.hasPrefix("/") { plan.directories.append(path) }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.1
+
+- Make `/filetype` consume one comma-separated argument, so ordinary filename
+  terms work before or after it without ambiguous parsing.
+
 ## 0.7.0
 
 - Add composable `/in`, `/size`, `/modified`, `/type`, `/limit`, `/not`, and
