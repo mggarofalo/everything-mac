@@ -26,7 +26,7 @@ struct SearchSettingsView: View {
                     Text("Ascending").tag(true)
                     Text("Descending").tag(false)
                 }
-                Stepper(value: limitBinding, in: 100...100_000, step: 100) {
+                Stepper(value: limitBinding, in: 100...10_000, step: 100) {
                     LabeledContent("Max results shown", value: model.resultLimit.formatted())
                 }
             }

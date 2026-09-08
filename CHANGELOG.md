@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0
+
+- Split the app into a persistent indexing agent, a persistent search endpoint, and a disposable UI client. Quitting the UI leaves indexing and search available.
+- Register both background agents with `SMAppService`, start them at login, and authenticate XPC clients by signing team and executable identity.
+
+## 0.4.1
+
+- Fix Match Path searches appearing frozen by matching plain terms through the parent hierarchy without rebuilding millions of full path strings.
+- Quit immediately instead of blocking the main thread while the entire index cache is serialized; periodic cache writes now run off the search actor too.
+
 ## 0.4.0
 
 - Keep the index complete by checkpointing only fully processed FSEvents and replaying changes made during rebuilds.

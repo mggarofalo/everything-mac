@@ -24,6 +24,7 @@ So I wrote my own. It reads every filename on the machine into memory and search
 - Shows the real file-type icon and a readable kind for each row.
 - Right-click menu: Open, Open With (lists every app associated with the file, plus a "Choose Application…" option to open it with anything), Reveal in Finder, Copy Path, Copy Name, Move to Trash.
 - Handles millions of files without choking. The index is a flat array scanned in parallel across all cores.
+- Runs as 3 processes: a persistent indexer, a persistent search endpoint, and a disposable UI. Quitting the UI does not stop indexing.
 
 ## Requirements
 
@@ -51,9 +52,16 @@ LOCAL_SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./scripts/build-dev.
 
 ### Full Disk Access
 
-The app can only index everything if you give it Full Disk Access:
+The indexing agent needs its own one-time Full Disk Access grant. Open System
+Settings > Privacy & Security > Full Disk Access, press `+`, then press
+Command-Shift-G in the file picker and enter:
 
-System Settings > Privacy & Security > Full Disk Access > turn on EverythingMac.
+```text
+/Applications/EverythingMac.app/Contents/MacOS/EverythingMacIndexer
+```
+
+The UI does not need Full Disk Access. The search service only receives filename
+query requests and results from the indexer.
 
 The first launch scans the whole disk and writes the index to a cache, so it takes a few minutes depending on how many files you have. After that it starts instantly and picks up file changes as they happen.
 

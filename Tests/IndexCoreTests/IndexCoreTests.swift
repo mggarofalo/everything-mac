@@ -3,6 +3,30 @@ import XCTest
 @testable import IndexCore
 
 final class IndexCoreTests: XCTestCase {
+    func testPlainMatchPathTermsPropagateThroughAncestors() {
+        var store = FileStore()
+        let root = store.append(name: "/", parent: FileStore.noParent, size: 0,
+                                mtime: 0, isDir: true, volID: 1)
+        let users = store.append(name: "Users", parent: root, size: 0,
+                                 mtime: 0, isDir: true, volID: 1)
+        let michael = store.append(name: "michael", parent: users, size: 0,
+                                   mtime: 0, isDir: true, volID: 1)
+        let projects = store.append(name: "Projects", parent: michael, size: 0,
+                                    mtime: 0, isDir: true, volID: 1)
+        let alpha = store.append(name: "Alpha", parent: projects, size: 0,
+                                 mtime: 0, isDir: true, volID: 1)
+        let file = store.append(name: "HARDENING.md", parent: alpha, size: 1,
+                                mtime: 0, isDir: false, volID: 1)
+        let engine = QueryEngine()
+
+        XCTAssertTrue(engine.search(Query(text: "projects", matchPath: true), in: store).contains(file))
+        XCTAssertTrue(engine.search(Query(text: "michael hardening", matchPath: true), in: store).contains(file))
+        XCTAssertFalse(engine.search(Query(text: "projects", matchPath: false), in: store).contains(file))
+        XCTAssertTrue(engine.search(Query(text: "Alpha/HARDENING.md", matchPath: true), in: store).contains(file))
+        XCTAssertFalse(engine.search(Query(text: "PROJECTS", matchPath: true,
+                                           caseInsensitive: false), in: store).contains(file))
+    }
+
     func testExclusionPrefixesRespectPathComponents() {
         let rules = ExcludeRules(pathPrefixes: ["/Users/me/Secret", "/Volumes/Work/"])
 

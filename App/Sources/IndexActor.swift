@@ -34,8 +34,12 @@ actor IndexActor {
     private var onLiveChange: (@Sendable () -> Void)?
     private var onProgress: (@Sendable (Int) -> Void)?
     private var isRescanning = false
+    private var rescanRequested = false
+    private var rescanWaiters: [CheckedContinuation<Void, Never>] = []
     private var accessEnabled = false
     private var accessGeneration: UInt64 = 0
+    private var saveInProgress = false
+    private var revision: UInt64 = 0
 
     init() {
         if let data = UserDefaults.standard.data(forKey: "excludeRules"),
@@ -45,6 +49,11 @@ actor IndexActor {
     }
 
     var totalCount: Int { store.liveCount }
+
+    func serviceStatus(hasFullDiskAccess: Bool) -> ServiceStatus {
+        ServiceStatus(totalCount: store.liveCount, revision: revision,
+                      scanning: isRescanning, hasFullDiskAccess: hasFullDiskAccess)
+    }
 
     // ~/Library/Application Support/Everything-Mac/index.idx
     static func cacheURL() -> URL {
@@ -147,38 +156,50 @@ actor IndexActor {
     func rescanAll(accessGeneration expectedGeneration: UInt64? = nil) async {
         guard accessEnabled,
               expectedGeneration == nil || expectedGeneration == accessGeneration else { return }
-        while isRescanning {
-            try? await Task.sleep(nanoseconds: 10_000_000)
-            guard accessEnabled, !Task.isCancelled else { return }
+        if isRescanning {
+            // Coalesce concurrent requests into one follow-up scan. Suspend callers
+            // on continuations instead of polling the actor with Task.sleep.
+            rescanRequested = true
+            await withCheckedContinuation { rescanWaiters.append($0) }
+            return
         }
         guard !Task.isCancelled else { return }
         isRescanning = true
         let scanGeneration = accessGeneration
-        defer { isRescanning = false }
-        // Take the checkpoint before stopping the stream. Events generated while the
-        // scanner runs are replayed into the finished snapshot from this point.
-        let checkpoint = UInt64(FSEventsGetCurrentEventId())
-        stopMonitor()
-        pendingDirs.removeAll(keepingCapacity: true)
-        pendingDeep.removeAll(keepingCapacity: true)
-        pendingMetadata.removeAll(keepingCapacity: true)
-        retryCounts.removeAll(keepingCapacity: true)
-        pendingMaxEventID = 0
-        pendingFullRescan = false
-        drainScheduled = false
+        defer {
+            isRescanning = false
+            let waiters = rescanWaiters
+            rescanWaiters.removeAll(keepingCapacity: true)
+            waiters.forEach { $0.resume() }
+        }
+        repeat {
+            rescanRequested = false
+            // Take the checkpoint before stopping the stream. Events generated while the
+            // scanner runs are replayed into the finished snapshot from this point.
+            let checkpoint = UInt64(FSEventsGetCurrentEventId())
+            stopMonitor()
+            pendingDirs.removeAll(keepingCapacity: true)
+            pendingDeep.removeAll(keepingCapacity: true)
+            pendingMetadata.removeAll(keepingCapacity: true)
+            retryCounts.removeAll(keepingCapacity: true)
+            pendingMaxEventID = 0
+            pendingFullRescan = false
+            drainScheduled = false
 
-        let effective = effectiveRules()
-        liveRules = effective
-        let prog = onProgress
-        let newStore = await Task.detached(priority: .userInitiated) {
-            ParallelScanner.scanWholeDisk(rules: effective) { count in prog?(count) }
-        }.value
-        guard accessEnabled, accessGeneration == scanGeneration, !Task.isCancelled else { return }
-        store = newStore
-        cachedQueryKey = nil
-        lastEventID = checkpoint
-        onProgress?(store.liveCount)
-        startMonitor()
+            let effective = effectiveRules()
+            liveRules = effective
+            let prog = onProgress
+            let newStore = await Task.detached(priority: .userInitiated) {
+                ParallelScanner.scanWholeDisk(rules: effective) { count in prog?(count) }
+            }.value
+            guard accessEnabled, accessGeneration == scanGeneration, !Task.isCancelled else { return }
+            store = newStore
+            revision &+= 1
+            cachedQueryKey = nil
+            lastEventID = checkpoint
+            onProgress?(store.liveCount)
+            startMonitor()
+        } while rescanRequested
     }
 
     // Launch path: load the cache if present (FSEvents replays any changes made
@@ -203,6 +224,7 @@ actor IndexActor {
            loaded.count > 0, savedFingerprint == fingerprint,
            !Self.isContaminated(loaded) {
             store = loaded
+            revision &+= 1
             lastEventID = evid
             startMonitor()
         } else {
@@ -452,6 +474,7 @@ actor IndexActor {
             if structuralChanged {
                 cachedQueryKey = nil
             }
+            if structuralChanged || visibleMetadataChanged { revision &+= 1 }
             if structuralChanged || visibleMetadataChanged { onLiveChange?() }
             if retryNeeded {
                 pendingMaxEventID = max(pendingMaxEventID, processedEventID)
@@ -500,12 +523,14 @@ actor IndexActor {
         }
         guard changed else { return }
         cachedQueryKey = nil
+        revision &+= 1
         onLiveChange?()
     }
 
     // Persist the current store and the highest event fully applied to it.
-    func flush(accessGeneration expectedGeneration: UInt64? = nil) {
+    func flush(accessGeneration expectedGeneration: UInt64? = nil) async {
         guard accessEnabled,
+              !saveInProgress,
               expectedGeneration == nil || expectedGeneration == accessGeneration else { return }
         // Bound in-memory churn without paying for an O(n) rebuild on every deletion.
         // The serializer independently omits every tombstone from the durable cache.
@@ -517,7 +542,32 @@ actor IndexActor {
             visibleResultPaths.removeAll(keepingCapacity: false)
             onLiveChange?()
         }
-        try? IndexCache.save(store, to: Self.cacheURL(), lastEventID: lastEventID,
-                             rulesFingerprint: effectiveRules().fingerprint())
+        // Snapshotting FileStore is copy-on-write. Serialize that snapshot away from
+        // this actor so searches and live updates continue while a multi-million-file
+        // cache is written. Promote the staged file only if disk access is still valid.
+        let snapshot = store
+        let eventID = lastEventID
+        let fingerprint = effectiveRules().fingerprint()
+        let generation = accessGeneration
+        let finalURL = Self.cacheURL()
+        let stagingURL = finalURL.deletingLastPathComponent()
+            .appendingPathComponent("index.\(UUID().uuidString).staging")
+        saveInProgress = true
+        let saved = await Task.detached(priority: .utility) {
+            do {
+                try IndexCache.save(snapshot, to: stagingURL, lastEventID: eventID,
+                                    rulesFingerprint: fingerprint)
+                return true
+            } catch {
+                return false
+            }
+        }.value
+        defer {
+            saveInProgress = false
+            try? FileManager.default.removeItem(at: stagingURL)
+        }
+        guard saved, accessEnabled, accessGeneration == generation else { return }
+        try? FileManager.default.removeItem(at: finalURL)
+        try? FileManager.default.moveItem(at: stagingURL, to: finalURL)
     }
 }

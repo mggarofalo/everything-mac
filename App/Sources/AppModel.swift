@@ -36,16 +36,26 @@ final class AppModel: ObservableObject {
         selectedPath = record?.path
     }
 
-    let index = IndexActor()
+    let index = SearchClient()
     private var task: Task<Void, Never>?
     private var liveTask: Task<Void, Never>?
-    private var flushTimer: Task<Void, Never>?
-    private var cloudSweepTimer: Task<Void, Never>?
     private var searchSeq = 0
     private var didBootstrap = false
     private var bootstrapTask: Task<Void, Never>?
     private var maintenanceTask: Task<Void, Never>?
     private var accessGeneration: UInt64 = 0
+
+    func refreshServiceAccess() {
+        Task {
+            guard let status = await index.currentStatus() else {
+                updateFullDiskAccess(false)
+                return
+            }
+            updateFullDiskAccess(status.hasFullDiskAccess)
+            scanning = status.scanning
+            total = status.totalCount
+        }
+    }
 
     func updateFullDiskAccess(_ granted: Bool) {
         guard granted != hasFullDiskAccess || (granted && !didBootstrap) else { return }
@@ -62,8 +72,6 @@ final class AppModel: ObservableObject {
         maintenanceTask?.cancel()
         task?.cancel()
         liveTask?.cancel()
-        flushTimer?.cancel()
-        cloudSweepTimer?.cancel()
         scanning = false
         selectedPath = nil
         selectedIdentity = nil
@@ -73,7 +81,7 @@ final class AppModel: ObservableObject {
     }
 
     private func bootstrap(generation: UInt64) {
-        guard !didBootstrap, FullDiskAccess.isGranted() else { return }
+        guard !didBootstrap, hasFullDiskAccess else { return }
         didBootstrap = true
         scanning = true
         loadPrefs()   // before the first runSearch so the initial query uses saved options
@@ -92,20 +100,6 @@ final class AppModel: ObservableObject {
             total = await index.totalCount
             rules = await index.currentRules()
             await runSearch()
-            startFlushTimer()
-            startCloudSweep()
-        }
-    }
-
-    // iCloud "Desktop & Documents" folders don't emit FSEvents, so poll them directly
-    // every 2s as a safety net (see IndexActor.sweepUserFolders — near-zero cost).
-    private func startCloudSweep() {
-        cloudSweepTimer = Task {
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 2_000_000_000) // 2s
-                if Task.isCancelled { return }
-                await index.sweepUserFolders()
-            }
         }
     }
 
@@ -161,20 +155,6 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func startFlushTimer() {
-        flushTimer = Task {
-            while !Task.isCancelled {
-                // 10 min, not 60s: a whole-disk index is millions of records, and
-                // flush() JSON-encodes the entire store on the actor (search waits).
-                // FSEvents replays anything missed since the last flush on relaunch,
-                // so a long interval only costs a little reconcile work after a crash.
-                try? await Task.sleep(nanoseconds: 600_000_000_000) // 10 min
-                if Task.isCancelled { return }
-                await index.flush()
-            }
-        }
-    }
-
     func focusSearch() { focusSearchSignal &+= 1 }
 
     // MARK: - Search preference persistence (UserDefaults)
@@ -185,7 +165,7 @@ final class AppModel: ObservableObject {
         caseSensitive = d.bool(forKey: "pref.caseSensitive")
         wholeWord = d.bool(forKey: "pref.wholeWord")
         let lim = d.integer(forKey: "pref.resultLimit")
-        resultLimit = lim > 0 ? lim : 5000
+        resultLimit = lim > 0 ? min(max(lim, 100), 10_000) : 5000
         if let sk = d.string(forKey: "pref.sortKey") { sortKey = Self.sortKey(from: sk) }
         if d.object(forKey: "pref.ascending") != nil { ascending = d.bool(forKey: "pref.ascending") }
     }

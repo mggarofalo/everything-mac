@@ -76,6 +76,16 @@ public struct QueryEngine: Sendable {
         let matchPath = query.matchPath
         let hasNonASCII = matchers.contains { if case .string = $0 { return true }; return false }
 
+        // The common Match Path query is one or more plain terms. Since parent IDs
+        // always precede their children, propagate "this component or an ancestor
+        // matched" in a single allocation-free path pass per term. Reconstructing a
+        // full String path for every one of several million records took tens of
+        // seconds and made the table appear frozen. Slash-containing and wildcard
+        // terms retain the exact full-path fallback below.
+        if matchPath, terms.allSatisfy({ !$0.contains("/") && !$0.contains("*") && !$0.contains("?") }) {
+            return inheritedPathSearch(terms, caseInsensitive: ci, in: store)
+        }
+
         // Serial below this threshold — thread fan-out isn't worth it for small stores.
         if n < 100_000 {
             return scanRange(0, UInt32(n), matchers: matchers, matchPath: matchPath,
@@ -98,6 +108,37 @@ public struct QueryEngine: Sendable {
             parts.set(matches, at: c)
         }
         return parts.flattened()
+    }
+
+    private func inheritedPathSearch(_ terms: [String], caseInsensitive: Bool,
+                                     in store: FileStore) -> [UInt32] {
+        let n = store.count
+        var matchesAll = [Bool](repeating: true, count: n)
+        for term in terms {
+            let ascii = caseInsensitive ? Glob.asciiLowerBytes(term) : nil
+            var inherited = [Bool](repeating: false, count: n)
+            for index in 0..<n {
+                let id = UInt32(index)
+                let parent = store.parent(of: id)
+                let ancestorMatched = parent != FileStore.noParent && inherited[Int(parent)]
+                let componentMatched: Bool
+                if let ascii {
+                    componentMatched = Glob.matchesASCII(patternLowerBytes: ascii,
+                                                          in: store.nameBytesSlice(of: id))
+                } else {
+                    componentMatched = Glob.matches(pattern: term, in: store.name(of: id),
+                                                    caseInsensitive: caseInsensitive)
+                }
+                inherited[index] = ancestorMatched || componentMatched
+                matchesAll[index] = matchesAll[index] && inherited[index]
+            }
+        }
+        var result: [UInt32] = []
+        result.reserveCapacity(min(n, 16_384))
+        for index in 0..<n where matchesAll[index] && store.isLive(UInt32(index)) {
+            result.append(UInt32(index))
+        }
+        return result
     }
 
     // Scan ids in [lo, hi) and return those matching every term. The match logic is

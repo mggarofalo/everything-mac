@@ -47,6 +47,20 @@ if grep -q 'com.apple.security.get-task-allow' <<<"$SIGNATURE"; then
   echo "Refusing to install a build with get-task-allow." >&2
   exit 1
 fi
+for service_spec in "EverythingMacIndexer:com.everythingmac.app" \
+                    "EverythingMacSearchService:EverythingMacSearchService"; do
+  service_name="${service_spec%%:*}"
+  expected_identifier="${service_spec#*:}"
+  service_signature="$(codesign -dvv "$APP/Contents/MacOS/$service_name" 2>&1)"
+  grep -q "Identifier=${expected_identifier}" <<<"$service_signature" || {
+    echo "Refusing to install $service_name with an unexpected signing identifier." >&2
+    exit 1
+  }
+  grep -q 'flags=.*runtime' <<<"$service_signature" || {
+    echo "Refusing to install $service_name without hardened runtime." >&2
+    exit 1
+  }
+done
 
 # Deploy as a complete bundle so files removed by a newer build cannot survive a
 # merge-copy. Stage and verify first, then replace the destination as one rename.
@@ -68,9 +82,15 @@ if ! codesign --verify --deep --strict --verbose=2 "/Applications/EverythingMac.
   exit 1
 fi
 
+# Registered agents survive UI quits and app replacements. Restart them so a local
+# upgrade uses the executables that were just installed instead of the old inodes.
+for service_label in com.everythingmac.indexer com.everythingmac.search; do
+  launchctl kickstart -k "gui/$(id -u)/${service_label}" 2>/dev/null || true
+done
+
 echo
 echo "Built + deployed: /Applications/EverythingMac.app"
 echo "Signature:"
 codesign -dv "/Applications/EverythingMac.app" 2>&1 \
   | grep -iE "Identifier=|Authority=|TeamIdentifier=|flags=" | sed 's/^/  /'
-echo "Run ./scripts/relaunch.sh to restart with a fresh scan."
+echo "The background agents were restarted if they were already registered."

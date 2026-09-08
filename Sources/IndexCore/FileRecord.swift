@@ -1,6 +1,6 @@
 // One entry. Stored struct-of-arrays inside FileStore; this struct is the
 // decoded view returned to callers.
-public struct FileRecord: Sendable, Equatable {
+public struct FileRecord: Sendable, Equatable, Codable {
     public let id: UInt32
     public let name: String
     public let path: String

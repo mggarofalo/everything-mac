@@ -12,7 +12,7 @@ struct ContentView: View {
             if !fdaGranted {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text("Grant Full Disk Access to index everything.")
+                    Text("Grant Full Disk Access to EverythingMacIndexer.")
                     Spacer()
                     Button("Open Settings") { FullDiskAccess.openSettings() }
                 }
@@ -41,7 +41,10 @@ struct ContentView: View {
     }
 
     private func refreshAccess() {
-        fdaGranted = FullDiskAccess.isGranted()
-        model.updateFullDiskAccess(fdaGranted)
+        Task {
+            let granted = await model.index.serviceHasFullDiskAccess()
+            fdaGranted = granted
+            model.updateFullDiskAccess(granted)
+        }
     }
 }
