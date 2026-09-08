@@ -9,8 +9,15 @@ struct SearchField: View {
     }
 
     private static let slashCommands = [
-        SlashCommand(command: "/filetype", description: "Find one or more file extensions"),
-        SlashCommand(command: "/regex", description: "Search with a regular expression")
+        SlashCommand(command: "/filetype", description: "EXT [EXT…] — match extensions"),
+        SlashCommand(command: "/in", description: "~/Folder — restrict to a subtree"),
+        SlashCommand(command: "/limit", description: "N — return at most N results"),
+        SlashCommand(command: "/modified", description: "today, 7d, or DATE..DATE"),
+        SlashCommand(command: "/not", description: "TERM — exclude name or path text"),
+        SlashCommand(command: "/or", description: "match either side"),
+        SlashCommand(command: "/regex", description: "PATTERN — regular expression; use last"),
+        SlashCommand(command: "/size", description: ">100mb or 1mb..1gb"),
+        SlashCommand(command: "/type", description: "file|folder — restrict result kind")
     ]
 
     @Binding var text: String
@@ -66,8 +73,16 @@ struct SearchField: View {
                             }
                             .buttonStyle(.plain)
                         }
+                        if matchingSlashCommands.count == Self.slashCommands.count {
+                            Divider()
+                            Text("Combine filters. Put text before /filetype; use /regex last.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 8)
+                        }
                     }
-                    .frame(width: 390)
+                    .frame(width: 440)
                     .padding(.vertical, 4)
                 }
             Menu {
@@ -98,7 +113,8 @@ struct SearchField: View {
     }
 
     private func accept(_ suggestion: SlashCommand) {
-        text = suggestion.command + " "
+        let prefix = text.lastIndex(where: { $0.isWhitespace }).map { String(text[...$0]) } ?? ""
+        text = prefix + suggestion.command + " "
         showsSlashCommands = false
         focused.wrappedValue = true
     }

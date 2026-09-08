@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.0
+
+- Add composable `/in`, `/size`, `/modified`, `/type`, `/limit`, `/not`, and
+  `/or` search commands alongside `/filetype` and `/regex`.
+- Complete slash commands after existing search text and show concise syntax help
+  for every command in the search-field popover.
+- Evaluate indexed text first and refine its candidates with cheap metadata filters;
+  metadata-only searches scan the compact arrays without materializing every ID.
+
 ## 0.6.2
 
 - Immediately cancel an in-flight service search when the query changes, so a

@@ -73,15 +73,36 @@ The sliders button at the right of the search field contains Match Path, Match C
 Match Whole Word, and Regular Expression options. The options are remembered between
 launches.
 
-Two slash commands are also available:
+Slash commands can be combined with ordinary filename text:
 
-- `/filetype md` finds files whose extension is `.md`.
-- `/filetype doc docx` finds either `.doc` or `.docx` files.
-- `/regex handoff\.md$` uses a regular expression. This example finds names ending
-  in `handoff.md`; `\.` means a literal dot and `$` means the end of the name.
+- `/in ~/Downloads` restricts results to that folder and its descendants. Use an
+  absolute path or a path beginning with `~`; quote paths containing spaces.
+- `/size >100mb` and `/size 1mb..10mb` filter by file size (`b`, `kb`, `mb`,
+  `gb`, and `tb` are accepted).
+- `/modified today`, `/modified 7d`, and `/modified 2026-09-01..2026-09-08`
+  filter by modification date.
+- `/type file` and `/type folder` restrict the result kind.
+- `/limit 100` returns at most 100 results, up to the limit configured in Settings.
+- `/not node_modules` excludes matching name or path text.
+- `invoice /or receipt` matches either side of `/or`.
+- `/filetype md` finds `.md` files; `/filetype doc docx` finds either extension.
+- `/regex handoff\.md$` finds names ending in `handoff.md`; `\.` means a literal
+  dot and `$` means the end of the name.
+
+Filters apply to the whole query, so they can be composed naturally:
+
+```text
+handoff /in ~/Documents /filetype md /size >1mb
+invoice /or receipt /modified 7d /type file
+package /not node_modules /in ~/Source
+```
+
+`/filetype` accepts all following non-command values as extensions, so put ordinary
+filename text before it. `/regex` consumes everything after it and must be last.
 
 Type `/` to see the available commands, then click one to insert it. Once the
 prefix identifies one command, press Tab to complete it (`/f` → `/filetype `).
+Completion also works after existing text (`invoice /mod` → `invoice /modified `).
 
 `/regex` consumes everything after the command as the expression. The Regex menu
 option treats the entire field as an expression without requiring the command.

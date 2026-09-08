@@ -67,6 +67,78 @@ final class IndexCoreTests: XCTestCase {
         XCTAssertNil(Query(text: "/").slashCommandCompletion)
         XCTAssertEqual(Query(text: "/f").slashCommandCompletion, "/filetype ")
         XCTAssertEqual(Query(text: "/reg").slashCommandCompletion, "/regex ")
+        XCTAssertEqual(Query(text: "invoice /mod").slashCommandCompletion,
+                       "invoice /modified ")
+        XCTAssertEqual(Query(text: "invoice /").matchingSlashCommands,
+                       Query.slashCommands)
+    }
+
+    func testComposableSlashCommandParsing() {
+        let query = Query(text: "handoff /or proposal /type file /size 1mb..2mb /limit 25")
+        let plan = query.plan
+
+        XCTAssertTrue(plan.isValid)
+        XCTAssertEqual(plan.termGroups, [["handoff"], ["proposal"]])
+        XCTAssertEqual(plan.kind, .file)
+        XCTAssertEqual(plan.sizes, [.range(1_048_576, 2_097_152)])
+        XCTAssertEqual(plan.limit, 25)
+        XCTAssertFalse(Query(text: "/size enormous").plan.isValid)
+        XCTAssertFalse(Query(text: "handoff /or").plan.isValid)
+        XCTAssertFalse(Query(text: "/type device").plan.isValid)
+        XCTAssertFalse(Query(text: "/in Documents").plan.isValid)
+    }
+
+    func testComposableSlashCommandSearch() {
+        var store = FileStore()
+        let root = store.append(name: "/", parent: FileStore.noParent, size: 0,
+                                mtime: 0, isDir: true, volID: 1)
+        let users = store.append(name: "Users", parent: root, size: 0,
+                                 mtime: 0, isDir: true, volID: 1)
+        let me = store.append(name: "me", parent: users, size: 0,
+                              mtime: 0, isDir: true, volID: 1)
+        let documents = store.append(name: "Documents", parent: me, size: 0,
+                                     mtime: 0, isDir: true, volID: 1)
+        let archive = store.append(name: "Archive", parent: documents, size: 0,
+                                   mtime: 0, isDir: true, volID: 1)
+        let current = Int64(Date().timeIntervalSince1970)
+        let handoff = store.append(name: "handoff.md", parent: documents,
+                                   size: 2 * 1_048_576, mtime: current,
+                                   isDir: false, volID: 1)
+        let proposal = store.append(name: "proposal.pdf", parent: documents,
+                                    size: 512 * 1_024, mtime: current,
+                                    isDir: false, volID: 1)
+        let archived = store.append(name: "handoff.md", parent: archive,
+                                    size: 2 * 1_048_576, mtime: current - 30 * 86_400,
+                                    isDir: false, volID: 1)
+        let outside = store.append(name: "handoff.md", parent: root,
+                                   size: 2 * 1_048_576, mtime: current,
+                                   isDir: false, volID: 1)
+        var index = ComponentSearchIndex()
+        XCTAssertTrue(index.rebuild(with: store))
+        let engine = QueryEngine()
+
+        XCTAssertEqual(engine.search(
+            Query(text: "handoff /in /Users/me/Documents /type file /size >1mb /modified 7d"),
+            in: store, componentIndex: index
+        ), [handoff])
+        XCTAssertEqual(engine.search(
+            Query(text: "handoff /or proposal /in /Users/me/Documents /type file"),
+            in: store, componentIndex: index
+        ), [handoff, proposal, archived])
+        XCTAssertEqual(engine.search(
+            Query(text: "handoff /not Archive /in /Users/me/Documents"),
+            in: store, componentIndex: index
+        ), [handoff])
+        XCTAssertEqual(engine.search(
+            Query(text: "/in /Users/me/Documents /filetype md /size 1mb..3mb"),
+            in: store, componentIndex: index
+        ), [handoff, archived])
+        XCTAssertEqual(engine.search(Query(text: "/type folder /in /Users/me/Documents"),
+                                     in: store, componentIndex: index),
+                       [documents, archive])
+        XCTAssertFalse(engine.search(Query(text: "/in /Users/me/Document"),
+                                     in: store, componentIndex: index).contains(outside))
+        XCTAssertEqual(Query(text: "/limit 17").requestedLimit, 17)
     }
 
     func testPlainMatchPathTermsPropagateThroughAncestors() {

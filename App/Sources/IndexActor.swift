@@ -95,8 +95,12 @@ actor IndexActor {
             cachedIDs = matches
             cachedQueryKey = key
         }
+        let commandLimit = Query(text: text, matchPath: matchPath,
+                                 caseInsensitive: caseInsensitive, wholeWord: wholeWord,
+                                 usesRegularExpression: usesRegularExpression).requestedLimit
+        let effectiveLimit = min(max(1, limit), commandLimit ?? Int.max)
         let sorted = engine.sortedPrefix(cachedIDs, by: sort, ascending: ascending,
-                                         limit: max(1, limit), in: store,
+                                         limit: effectiveLimit, in: store,
                                          isCancelled: isCancelled)
         guard !isCancelled() else { return [] }
         let records = sorted.map { id in
