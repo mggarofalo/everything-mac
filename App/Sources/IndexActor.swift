@@ -10,6 +10,9 @@ import IndexCore
 actor IndexActor {
     private var store = FileStore()
     private let engine = QueryEngine()
+    private var componentIndex = ComponentSearchIndex()
+    private var componentIndexBuild: Task<(UInt64, ComponentSearchIndex), Never>?
+    private var componentIndexGeneration: UInt64 = 0
     private var rules = ExcludeRules.defaults
     // Rules the LIVE path reconciles with — the user rules plus the firmlink back-door /
     // network-mount exclusions the scan applies via effectiveRules(). Without these, a
@@ -66,18 +69,32 @@ actor IndexActor {
     }
 
     func search(_ text: String, matchPath: Bool, caseInsensitive: Bool = true, wholeWord: Bool = false,
-                sort: QueryEngine.SortKey, ascending: Bool, limit: Int = 5000) -> [FileRecord] {
+                sort: QueryEngine.SortKey, ascending: Bool, limit: Int = 5000,
+                isCancelled: @Sendable () -> Bool = { false }) async -> [FileRecord] {
         // Re-scan only when the query (not the sort) changed. The key folds in every
         // flag that changes which ids match — matchPath, case sensitivity, whole-word —
         // so flipping any of them invalidates the cache. engine.search already excludes
         // tombstoned ids, so no separate isLive filter pass is needed.
         let key = (matchPath ? "P" : "N") + (caseInsensitive ? "i" : "s") + (wholeWord ? "w" : "x") + "\u{1}" + text
         if key != cachedQueryKey {
-            cachedIDs = engine.search(Query(text: text, matchPath: matchPath,
-                                            caseInsensitive: caseInsensitive, wholeWord: wholeWord), in: store)
+            let query = Query(text: text, matchPath: matchPath,
+                              caseInsensitive: caseInsensitive, wholeWord: wholeWord)
+            let matches: [UInt32]
+            if query.terms.isEmpty {
+                matches = engine.search(query, in: store, isCancelled: isCancelled)
+            } else {
+                guard await prepareComponentIndex(isCancelled: isCancelled) else { return [] }
+                matches = engine.search(query, in: store, componentIndex: componentIndex,
+                                        isCancelled: isCancelled)
+            }
+            guard !isCancelled() else { return [] }
+            cachedIDs = matches
             cachedQueryKey = key
         }
-        let sorted = engine.sortedPrefix(cachedIDs, by: sort, ascending: ascending, limit: max(1, limit), in: store)
+        let sorted = engine.sortedPrefix(cachedIDs, by: sort, ascending: ascending,
+                                         limit: max(1, limit), in: store,
+                                         isCancelled: isCancelled)
+        guard !isCancelled() else { return [] }
         let records = sorted.map { id in
             FileRecord(id: id, name: store.name(of: id), path: store.path(of: id),
                        parent: store.parent(of: id),
@@ -194,6 +211,7 @@ actor IndexActor {
             }.value
             guard accessEnabled, accessGeneration == scanGeneration, !Task.isCancelled else { return }
             store = newStore
+            beginComponentIndexBuild()
             revision &+= 1
             cachedQueryKey = nil
             lastEventID = checkpoint
@@ -224,6 +242,7 @@ actor IndexActor {
            loaded.count > 0, savedFingerprint == fingerprint,
            !Self.isContaminated(loaded) {
             store = loaded
+            beginComponentIndexBuild()
             revision &+= 1
             lastEventID = evid
             startMonitor()
@@ -299,6 +318,7 @@ actor IndexActor {
         pendingFullRescan = false
         drainScheduled = false
         store = FileStore()
+        discardComponentIndex()
         cachedQueryKey = nil
         cachedIDs.removeAll()
         try? FileManager.default.removeItem(at: Self.cacheURL())
@@ -537,6 +557,7 @@ actor IndexActor {
         let compactThreshold = max(100_000, store.count / 10)
         if store.deletedCount >= compactThreshold {
             store = store.compacted()
+            beginComponentIndexBuild()
             cachedQueryKey = nil
             cachedIDs.removeAll(keepingCapacity: false)
             visibleResultPaths.removeAll(keepingCapacity: false)
@@ -569,5 +590,41 @@ actor IndexActor {
         guard saved, accessEnabled, accessGeneration == generation else { return }
         try? FileManager.default.removeItem(at: finalURL)
         try? FileManager.default.moveItem(at: stagingURL, to: finalURL)
+    }
+
+    /// Builds the large derived postings table once per store replacement. Search
+    /// requests share this task: canceling a stale keystroke request must not throw
+    /// away construction work needed by the request that superseded it.
+    private func beginComponentIndexBuild() {
+        componentIndexGeneration &+= 1
+        let generation = componentIndexGeneration
+        let snapshot = store
+        componentIndex = ComponentSearchIndex()
+        componentIndexBuild?.cancel()
+        componentIndexBuild = Task.detached(priority: .utility) {
+            var index = ComponentSearchIndex()
+            if index.synchronize(with: snapshot, isCancelled: { Task.isCancelled }) {
+                index.compactStorage()
+            }
+            return (generation, index)
+        }
+    }
+
+    private func discardComponentIndex() {
+        componentIndexGeneration &+= 1
+        componentIndexBuild?.cancel()
+        componentIndexBuild = nil
+        componentIndex = ComponentSearchIndex()
+    }
+
+    private func prepareComponentIndex(isCancelled: @Sendable () -> Bool) async -> Bool {
+        while let build = componentIndexBuild {
+            let (generation, built) = await build.value
+            guard generation == componentIndexGeneration else { continue }
+            componentIndex = built
+            componentIndexBuild = nil
+        }
+        guard !isCancelled() else { return false }
+        return componentIndex.synchronize(with: store, isCancelled: isCancelled)
     }
 }

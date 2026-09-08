@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.1
+
+- Add a compact component trigram index that narrows substring and Match Path searches before reconstructing paths.
+- Cancel obsolete in-flight searches when a newer keystroke query arrives instead of letting whole-index work queue ahead of the final query.
+- Treat both `/` and `\\` as path separators in Match Path queries.
+
 ## 0.5.0
 
 - Split the app into a persistent indexing agent, a persistent search endpoint, and a disposable UI client. Quitting the UI leaves indexing and search available.

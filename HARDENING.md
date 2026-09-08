@@ -34,10 +34,13 @@ Full Disk Access to a locally signed application.
 - Separate the indexer, search endpoint, and UI into distinct processes. The two
   agents start through `SMAppService` and survive when the UI quits.
 - Restrict both XPC endpoints to the expected executables signed by the same team.
+- Build a derived component-substring index without duplicating full path strings,
+  and cancel obsolete XPC searches from newer keystrokes.
 
 ## Verification
 
-- `swift test`: six tests pass, including live FSEvents delivery and Match Path tests.
+- `swift test`: nine tests pass, including live FSEvents delivery, indexed Match
+  Path semantics, incremental additions/deletions, and search cancellation.
 - Xcode Release build: succeeds with Swift 6.
 - Installed bundle: `codesign --verify --deep --strict` succeeds.
 - Signature: Team ID `649367BDD4`, hardened-runtime flag present, no
@@ -46,10 +49,19 @@ Full Disk Access to a locally signed application.
   Disk Access banner, reports zero indexed objects, and disables Rebuild Index.
 - Full-disk run: indexed 3,634,378 objects in about 30 seconds and wrote a 200 MB
   mode-0600 cache. Resident memory settled around 350–420 MB after the scan.
-- Search/live update: a unique filename query returned its one result immediately;
-  a newly created probe appeared in under half a second and disappeared on deletion.
+- Search/live update: a unique filename query returned its one result immediately.
+  A new Desktop probe appeared on the next query; its FileProvider-backed deletion
+  took about 23 seconds to reconcile.
 - Service lifecycle: the UI quit in about 200 ms while both launch agents remained
   active. A file created with no UI running appeared when the UI reopened.
+- Search latency: a standalone optimized benchmark against the real cache ran
+  `desktop marvel present` in 89 ms (one result) and `HARDENING.md` in 0.4 ms.
+  Realistic character-by-character entry fell from 9.4 seconds after the last
+  keystroke to about 0.4 seconds, including accessibility-tool overhead.
+- Derived-index cost: the standalone optimized build took 3.5 seconds; the live
+  background service completed in about 8 seconds while the machine was active.
+  The indexer settled around 610 MB resident versus about 280 MB without substring
+  postings, with an approximately 860 MB construction peak.
 
 ## Installation experience
 
@@ -61,6 +73,11 @@ rescan. In normal use, filename queries and FSEvents changes were immediate.
 
 ## Remaining limitations
 
+- The compact filename cache is durable, but the derived trigram postings are
+  rebuilt after the indexing agent restarts. On the measured 3.6-million-record
+  index this took 3.5–8 seconds; searches submitted during that window wait for it.
+- FileProvider-backed Desktop deletions can arrive well after creations; the measured
+  deletion remained searchable for about 23 seconds before reconciliation.
 - Unlike Everything on NTFS, this app has no APFS catalog/journal API that provides
   an instant authoritative filename list. Its first index is a filesystem crawl;
   FSEvents maintains that snapshot afterward.

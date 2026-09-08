@@ -1,8 +1,27 @@
 import AppKit
 import IndexCore
 
+private final class LatestSearch: @unchecked Sendable {
+    private let lock = NSLock()
+    private var generation: UInt64 = 0
+
+    func begin() -> UInt64 {
+        lock.lock()
+        defer { lock.unlock() }
+        generation &+= 1
+        return generation
+    }
+
+    func isCurrent(_ candidate: UInt64) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return generation == candidate
+    }
+}
+
 private final class IndexService: NSObject, EverythingMacServiceProtocol, @unchecked Sendable {
     private let index = IndexActor()
+    private let latestSearch = LatestSearch()
     private var generation: UInt64 = 1
     private let startLock = NSLock()
     private var didStart = false
@@ -49,11 +68,21 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
 
     func perform(_ requestData: Data, withReply reply: @escaping @Sendable (Data) -> Void) {
         ensureStarted()
+        let request: ServiceRequest
+        do {
+            request = try JSONDecoder().decode(ServiceRequest.self, from: requestData)
+        } catch {
+            let failure = ServiceReply.failure(error.localizedDescription)
+            reply((try? JSONEncoder().encode(failure)) ?? Data())
+            return
+        }
+        // Advance this before awaiting the actor. A newer XPC request can then
+        // cancel a CPU-bound older search even while the actor is occupied by it.
+        let searchGeneration = request.operation == .search ? latestSearch.begin() : nil
         Task {
             let envelope: ServiceReply
             do {
-                let request = try JSONDecoder().decode(ServiceRequest.self, from: requestData)
-                envelope = try await handle(request)
+                envelope = try await handle(request, searchGeneration: searchGeneration)
             } catch {
                 envelope = .failure(error.localizedDescription)
             }
@@ -61,7 +90,7 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
         }
     }
 
-    private func handle(_ request: ServiceRequest) async throws -> ServiceReply {
+    private func handle(_ request: ServiceRequest, searchGeneration: UInt64?) async throws -> ServiceReply {
         switch request.operation {
         case .status:
             let status = await index.serviceStatus(hasFullDiskAccess: FullDiskAccess.isGranted())
@@ -69,11 +98,15 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
         case .search:
             let payload = try requirePayload(request)
             let query = try JSONDecoder().decode(SearchRequest.self, from: payload)
+            guard let searchGeneration else { return .failure("Missing search generation") }
             let records = await index.search(query.text, matchPath: query.matchPath,
                                              caseInsensitive: query.caseInsensitive,
                                              wholeWord: query.wholeWord,
                                              sort: sortKey(query.sort), ascending: query.ascending,
-                                             limit: min(max(1, query.limit), 10_000))
+                                             limit: min(max(1, query.limit), 10_000),
+                                             isCancelled: { [latestSearch] in
+                                                 !latestSearch.isCurrent(searchGeneration)
+                                             })
             return .success(SearchResponse(records: records))
         case .rebuild:
             await index.rescanAll(accessGeneration: generation)

@@ -27,6 +27,67 @@ final class IndexCoreTests: XCTestCase {
                                            caseInsensitive: false), in: store).contains(file))
     }
 
+    func testComponentIndexPreservesSubstringAndPathSemantics() {
+        var store = FileStore()
+        let root = store.append(name: "/", parent: FileStore.noParent, size: 0,
+                                mtime: 0, isDir: true, volID: 1)
+        let desktop = store.append(name: "Desktop", parent: root, size: 0,
+                                   mtime: 0, isDir: true, volID: 1)
+        let document = store.append(name: "marvel-presentation-layer.md", parent: desktop,
+                                    size: 1, mtime: 0, isDir: false, volID: 1)
+        let unrelated = store.append(name: "presentation-notes.md", parent: root,
+                                     size: 1, mtime: 0, isDir: false, volID: 1)
+        var index = ComponentSearchIndex()
+        XCTAssertTrue(index.synchronize(with: store))
+        let engine = QueryEngine()
+
+        XCTAssertEqual(engine.search(Query(text: "desktop marvel present", matchPath: true),
+                                     in: store, componentIndex: index), [document])
+        XCTAssertEqual(engine.search(Query(text: "Desktop/marvel-present", matchPath: true),
+                                     in: store, componentIndex: index), [document])
+        XCTAssertEqual(engine.search(Query(text: "Desktop\\marvel-present", matchPath: true),
+                                     in: store, componentIndex: index), [document])
+        XCTAssertEqual(engine.search(Query(text: "marvel present", matchPath: false),
+                                     in: store, componentIndex: index), [document])
+        XCTAssertEqual(engine.search(Query(text: "presentation", matchPath: false),
+                                     in: store, componentIndex: index), [document, unrelated])
+    }
+
+    func testComponentIndexSynchronizesAppendsAndIgnoresDeletes() {
+        var store = FileStore()
+        let root = store.append(name: "/", parent: FileStore.noParent, size: 0,
+                                mtime: 0, isDir: true, volID: 1)
+        let old = store.append(name: "old-marvel.txt", parent: root, size: 1,
+                               mtime: 0, isDir: false, volID: 1)
+        var index = ComponentSearchIndex()
+        XCTAssertTrue(index.synchronize(with: store))
+        let added = store.append(name: "new-marvel.txt", parent: root, size: 1,
+                                 mtime: 0, isDir: false, volID: 1)
+        store.markDeleted(old)
+        XCTAssertTrue(index.synchronize(with: store))
+
+        XCTAssertEqual(QueryEngine().search(Query(text: "marvel"), in: store,
+                                            componentIndex: index), [added])
+        XCTAssertEqual(index.indexedRecordCount, store.count)
+    }
+
+    func testSearchCancellationStopsIndexedWork() {
+        var store = FileStore()
+        let root = store.append(name: "/", parent: FileStore.noParent, size: 0,
+                                mtime: 0, isDir: true, volID: 1)
+        for index in 0..<10_000 {
+            _ = store.append(name: "common-file-\(index).txt", parent: root, size: 1,
+                             mtime: 0, isDir: false, volID: 1)
+        }
+        var componentIndex = ComponentSearchIndex()
+        XCTAssertTrue(componentIndex.synchronize(with: store))
+
+        let result = QueryEngine().search(Query(text: "common"), in: store,
+                                          componentIndex: componentIndex,
+                                          isCancelled: { true })
+        XCTAssertTrue(result.isEmpty)
+    }
+
     func testExclusionPrefixesRespectPathComponents() {
         let rules = ExcludeRules(pathPrefixes: ["/Users/me/Secret", "/Volumes/Work/"])
 

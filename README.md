@@ -23,7 +23,7 @@ So I wrote my own. It reads every filename on the machine into memory and search
 - Standard results table with Name, Path, Size, Kind, and Date Modified. Click a header to sort.
 - Shows the real file-type icon and a readable kind for each row.
 - Right-click menu: Open, Open With (lists every app associated with the file, plus a "Choose Application…" option to open it with anything), Reveal in Finder, Copy Path, Copy Name, Move to Trash.
-- Handles millions of files without choking. The index is a flat array scanned in parallel across all cores.
+- Handles millions of files through compact substring postings, with a parallel full-scan fallback for short or wildcard queries.
 - Runs as 3 processes: a persistent indexer, a persistent search endpoint, and a disposable UI. Quitting the UI does not stop indexing.
 
 ## Requirements
@@ -72,7 +72,8 @@ Launch it and start typing. Matches show up right away. Click a column header to
 ## How it works
 
 - Every filename lives in one big UTF-8 buffer, with the metadata (size, dates, flags) held in parallel arrays alongside it. That whole structure gets written to a binary cache so restarts are fast.
-- A search runs as a parallel substring scan across all CPU cores, feeding a fixed-size max-heap that keeps only the top results. That's what keeps typing responsive even with millions of records.
+- A derived trigram index maps filename and path-component substrings to compact record-ID postings. Searches start from the rarest posting and verify only those candidate paths; short and wildcard queries retain the parallel full-scan fallback.
+- Newer keystroke queries cancel obsolete searches already executing in the indexer, so stale work cannot queue ahead of what is currently in the field.
 - An FSEvents watcher folds new, renamed, deleted, and modified files back into the index.
 
 The app checkpoints only events that it has processed. It replays changes made during scans and performs a complete rebuild when FSEvents reports lost history.
