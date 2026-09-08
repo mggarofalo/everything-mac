@@ -84,7 +84,8 @@ Slash commands can be combined with ordinary filename text:
 - `/type file` and `/type folder` restrict the result kind.
 - `/limit 100` returns at most 100 results, up to the limit configured in Settings.
 - `/not node_modules` excludes matching name or path text.
-- `invoice /or receipt` matches either side of `/or`.
+- `invoice /or receipt` matches either side of `/or`. A file type can also be an
+  alternative: `invoice /or /filetype md`.
 - `/filetype md` finds `.md` files; `/filetype doc,docx` finds either extension.
 - `/regex handoff\.md$` finds names ending in `handoff.md`; `\.` means a literal
   dot and `$` means the end of the name.
@@ -95,12 +96,16 @@ Filters apply to the whole query, so they can be composed naturally:
 handoff /in ~/Documents /filetype md /size >1mb
 invoice /or receipt /modified 7d /type file
 package /not node_modules /in ~/Source
+/in ~/Desktop rx /or codex /or release /or marvel /or /filetype md
 ```
 
 Every command except `/or` takes exactly one argument. Use commas for multiple file
 types, so `/filetype md marvel` means Markdown files matching `marvel`, while
 `/filetype md,markdown` accepts either extension. `/regex` consumes everything after
 it and must be last.
+
+Invalid or incomplete command syntax is explained directly below the search field
+instead of silently producing an empty result list.
 
 Type `/` to see the available commands, then click one to insert it. Once the
 prefix identifies one command, press Tab to complete it (`/f` → `/filetype `).

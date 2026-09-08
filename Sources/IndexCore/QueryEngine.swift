@@ -38,24 +38,61 @@ public struct QueryEngine: Sendable {
         let plan = query.plan
         guard plan.isValid else { return [] }
         let extensionBytes = plan.fileTypes.compactMap(Glob.asciiLowerBytes)
+        let alternativeExtensions = plan.alternativeFileTypes.mapValues {
+            $0.compactMap(Glob.asciiLowerBytes)
+        }
         var refinementPlan = plan
+
+        if let directory = plan.directories.first, directory.hasPrefix("/"),
+           store.idForDirPath(directory) == nil { return [] }
+
+        let scopedIDs: [UInt32]?
+        if plan.regularExpression == nil, plan.hasAlternativeMatchers,
+           let directory = plan.directories.first, directory.hasPrefix("/") {
+            scopedIDs = descendants(of: directory, in: store, maximumCount: 250_000,
+                                    isCancelled: isCancelled)
+        } else {
+            scopedIDs = nil
+        }
 
         let ids: [UInt32]
         if let pattern = plan.regularExpression {
             ids = regularExpressionSearch(pattern, query: query, in: store,
                                           componentIndex: componentIndex,
                                           isCancelled: isCancelled)
-        } else if plan.hasPositiveTerms {
+        } else if let scopedIDs {
+            ids = scopedAlternativeSearch(scopedIDs, plan: plan,
+                                          extensions: alternativeExtensions,
+                                          query: query, in: store,
+                                          isCancelled: isCancelled)
+            refinementPlan.directories.removeFirst()
+        } else if plan.hasAlternativeMatchers {
             var union: [UInt32] = []
-            for group in plan.termGroups where !group.isEmpty {
+            for groupIndex in plan.termGroups.indices {
                 if isCancelled() { return [] }
-                let groupText = group.map { $0.contains(where: { $0.isWhitespace }) ? "\"\($0)\"" : $0 }
-                    .joined(separator: " ")
-                let groupQuery = Query(text: groupText, matchPath: query.matchPath,
-                                       caseInsensitive: query.caseInsensitive,
-                                       wholeWord: query.wholeWord)
-                let matches = textSearch(groupQuery, in: store, componentIndex: componentIndex,
-                                         isCancelled: isCancelled)
+                let group = plan.termGroups[groupIndex]
+                let alternativeTypes = plan.alternativeFileTypes[groupIndex] ?? []
+                let matches: [UInt32]
+                if !group.isEmpty {
+                    let groupText = group.map {
+                        $0.contains(where: { $0.isWhitespace }) ? "\"\($0)\"" : $0
+                    }.joined(separator: " ")
+                    let groupQuery = Query(text: groupText, matchPath: query.matchPath,
+                                           caseInsensitive: query.caseInsensitive,
+                                           wholeWord: query.wholeWord)
+                    let textMatches = textSearch(groupQuery, in: store,
+                                                 componentIndex: componentIndex,
+                                                 isCancelled: isCancelled)
+                    let types = alternativeExtensions[groupIndex] ?? []
+                    matches = types.isEmpty ? textMatches : filter(
+                        textMatches, byExtensions: types, in: store,
+                        isCancelled: isCancelled
+                    )
+                } else {
+                    matches = fileTypeSearch(alternativeTypes, in: store,
+                                             componentIndex: componentIndex,
+                                             isCancelled: isCancelled)
+                }
                 union = mergeSortedUnique(union, matches, isCancelled: isCancelled)
             }
             ids = union
@@ -84,6 +121,20 @@ public struct QueryEngine: Sendable {
             if plan.regularExpression != nil, plan.hasPositiveTerms,
                !matchesAnyTermGroup(plan.termGroups, id: id, query: query, in: store) { continue }
             result.append(id)
+        }
+        return result
+    }
+
+    private func filter(_ ids: [UInt32], byExtensions extensions: [[UInt8]],
+                        in store: FileStore,
+                        isCancelled: @Sendable () -> Bool) -> [UInt32] {
+        var result: [UInt32] = []
+        result.reserveCapacity(min(ids.count, 16_384))
+        for (offset, id) in ids.enumerated() {
+            if offset & 0xFFF == 0, isCancelled() { return [] }
+            if extensions.contains(where: { store.extensionMatches($0, of: id) }) {
+                result.append(id)
+            }
         }
         return result
     }
@@ -160,6 +211,7 @@ public struct QueryEngine: Sendable {
     }
 
     private func descendants(of path: String, in store: FileStore,
+                             maximumCount: Int? = nil,
                              isCancelled: @Sendable () -> Bool) -> [UInt32]? {
         guard path.hasPrefix("/"), let root = store.idForDirPath(path) else { return nil }
         var stack = [root]
@@ -167,6 +219,7 @@ public struct QueryEngine: Sendable {
         while let id = stack.popLast() {
             if result.count & 0xFFF == 0, isCancelled() { return [] }
             if store.isLive(id) { result.append(id) }
+            if let maximumCount, result.count > maximumCount { return nil }
             stack.append(contentsOf: store.childIDs(of: id))
         }
         result.sort()
@@ -216,6 +269,41 @@ public struct QueryEngine: Sendable {
                     Glob.containsWholeWord(term, in: text, caseInsensitive: query.caseInsensitive)
             }
         }
+    }
+
+    private func scopedAlternativeSearch(
+        _ ids: [UInt32], plan: Query.Plan, extensions: [Int: [[UInt8]]],
+        query: Query, in store: FileStore,
+        isCancelled: @Sendable () -> Bool
+    ) -> [UInt32] {
+        var result: [UInt32] = []
+        result.reserveCapacity(min(ids.count, 16_384))
+        for (offset, id) in ids.enumerated() {
+            if offset & 0xFFF == 0, isCancelled() { return [] }
+            if matchesAnyAlternative(plan, extensions: extensions, id: id,
+                                     query: query, in: store) { result.append(id) }
+        }
+        return result
+    }
+
+    private func matchesAnyAlternative(_ plan: Query.Plan, extensions: [Int: [[UInt8]]],
+                                       id: UInt32, query: Query,
+                                       in store: FileStore) -> Bool {
+        let text = query.matchPath ? store.path(of: id) : store.name(of: id)
+        for groupIndex in plan.termGroups.indices {
+            let terms = plan.termGroups[groupIndex]
+            let types = extensions[groupIndex] ?? []
+            guard !terms.isEmpty || !types.isEmpty else { continue }
+            let termsMatch = terms.allSatisfy { term in
+                guard Glob.matches(pattern: term, in: text,
+                                   caseInsensitive: query.caseInsensitive) else { return false }
+                return !query.wholeWord || term.contains("*") || term.contains("?") ||
+                    Glob.containsWholeWord(term, in: text, caseInsensitive: query.caseInsensitive)
+            }
+            let typeMatches = types.isEmpty || types.contains { store.extensionMatches($0, of: id) }
+            if termsMatch && typeMatches { return true }
+        }
+        return false
     }
 
     private func fileTypeSearch(

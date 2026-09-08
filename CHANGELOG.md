@@ -4,6 +4,9 @@
 
 - Make `/filetype` consume one comma-separated argument, so ordinary filename
   terms work before or after it without ambiguous parsing.
+- Allow `/filetype` as an `/or` alternative and evaluate small `/in` subtrees
+  directly instead of running every alternative across the whole index.
+- Show concise inline errors for unknown, incomplete, or invalid slash commands.
 
 ## 0.7.0
 

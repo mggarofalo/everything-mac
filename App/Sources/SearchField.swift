@@ -14,7 +14,7 @@ struct SearchField: View {
         SlashCommand(command: "/limit", description: "N — return at most N results"),
         SlashCommand(command: "/modified", description: "today, 7d, or DATE..DATE"),
         SlashCommand(command: "/not", description: "TERM — exclude name or path text"),
-        SlashCommand(command: "/or", description: "match either side"),
+        SlashCommand(command: "/or", description: "start a text or filetype alternative"),
         SlashCommand(command: "/regex", description: "PATTERN — regular expression; use last"),
         SlashCommand(command: "/size", description: ">100mb or 1mb..1gb"),
         SlashCommand(command: "/type", description: "file|folder — restrict result kind")
@@ -31,9 +31,10 @@ struct SearchField: View {
     @State private var showsSlashCommands = false
 
     var body: some View {
-        HStack {
-            Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-            TextField("Search everything…", text: $text)
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
+                TextField("Search everything…", text: $text)
                 .textFieldStyle(.plain).font(.system(size: 15))
                 .focused(focused)
                 .onChange(of: text) {
@@ -85,26 +86,45 @@ struct SearchField: View {
                     .frame(width: 440)
                     .padding(.vertical, 4)
                 }
-            Menu {
-                Toggle("Match Path", isOn: $matchPath)
-                Toggle("Match Case", isOn: $caseSensitive)
-                Toggle("Match Whole Word", isOn: $wholeWord)
-                    .disabled(usesRegularExpression)
-                Divider()
-                Toggle("Regular Expression", isOn: $usesRegularExpression)
-            } label: {
-                Image(systemName: "slider.horizontal.3")
-                    .accessibilityLabel("Search Options")
+                Menu {
+                    Toggle("Match Path", isOn: $matchPath)
+                    Toggle("Match Case", isOn: $caseSensitive)
+                    Toggle("Match Whole Word", isOn: $wholeWord)
+                        .disabled(usesRegularExpression)
+                    Divider()
+                    Toggle("Regular Expression", isOn: $usesRegularExpression)
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .accessibilityLabel("Search Options")
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .help("Search Options")
+                .onChange(of: matchPath) { onOptionsChange() }
+                .onChange(of: caseSensitive) { onOptionsChange() }
+                .onChange(of: wholeWord) { onOptionsChange() }
+                .onChange(of: usesRegularExpression) { onOptionsChange() }
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
-            .help("Search Options")
-            .onChange(of: matchPath) { onOptionsChange() }
-            .onChange(of: caseSensitive) { onOptionsChange() }
-            .onChange(of: wholeWord) { onOptionsChange() }
-            .onChange(of: usesRegularExpression) { onOptionsChange() }
+            .padding(8)
+            if let validationMessage {
+                Label(validationMessage, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 8)
+                    .padding(.bottom, 6)
+            }
         }
-        .padding(8)
+    }
+
+    private var validationMessage: String? {
+        let query = Query(text: text, usesRegularExpression: usesRegularExpression)
+        let activeToken = text.split(whereSeparator: { $0.isWhitespace }).last.map {
+            String($0).lowercased()
+        }
+        let isIncompletePrefix = query.isSlashCommandPrefix &&
+            !Query.slashCommands.contains(activeToken ?? "")
+        guard !isIncompletePrefix else { return nil }
+        return query.plan.validationMessage
     }
 
     private var matchingSlashCommands: [SlashCommand] {

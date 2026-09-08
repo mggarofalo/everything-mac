@@ -49,6 +49,7 @@ public struct Query: Sendable {
         public var termGroups: [[String]] = [[]]
         public var excludedTerms: [String] = []
         public var fileTypes: [String] = []
+        public var alternativeFileTypes: [Int: [String]] = [:]
         public var directories: [String] = []
         public var sizes: [SizeConstraint] = []
         public var modified: [ModifiedConstraint] = []
@@ -56,10 +57,14 @@ public struct Query: Sendable {
         public var limit: Int?
         public var regularExpression: String?
         public var isValid = true
+        public var validationMessage: String?
 
         var hasPositiveTerms: Bool { termGroups.contains { !$0.isEmpty } }
+        var hasAlternativeMatchers: Bool {
+            hasPositiveTerms || !alternativeFileTypes.isEmpty
+        }
         var hasFilters: Bool {
-            !excludedTerms.isEmpty || !fileTypes.isEmpty || !directories.isEmpty ||
+            !excludedTerms.isEmpty || !fileTypes.isEmpty || !alternativeFileTypes.isEmpty || !directories.isEmpty ||
                 !sizes.isEmpty || !modified.isEmpty || kind != nil || regularExpression != nil
         }
     }
@@ -95,7 +100,7 @@ public struct Query: Sendable {
 
     public var isUnconstrained: Bool {
         let parsed = plan
-        return parsed.isValid && !parsed.hasPositiveTerms && !parsed.hasFilters
+        return parsed.isValid && !parsed.hasAlternativeMatchers && !parsed.hasFilters
     }
 
     public var isSlashCommandPrefix: Bool { !matchingSlashCommands.isEmpty }
@@ -134,13 +139,24 @@ public struct Query: Sendable {
             let token = tokens[index]
             let command = token.lowercased()
             guard slashCommands.contains(command) else {
+                if token.hasPrefix("/") {
+                    invalidate(&plan, "Unknown command \(token). Type / to see available commands.")
+                }
                 plan.termGroups[group].append(token)
                 index += 1
                 continue
             }
 
             if command == "/or" {
-                guard !plan.termGroups[group].isEmpty else { plan.isValid = false; index += 1; continue }
+                if group == 0, plan.termGroups[0].isEmpty, !plan.fileTypes.isEmpty {
+                    plan.alternativeFileTypes[0] = plan.fileTypes
+                    plan.fileTypes = []
+                }
+                guard !plan.termGroups[group].isEmpty || plan.alternativeFileTypes[group] != nil else {
+                    invalidate(&plan, "/or needs a search expression on both sides.")
+                    index += 1
+                    continue
+                }
                 plan.termGroups.append([])
                 group += 1
                 index += 1
@@ -150,11 +166,18 @@ public struct Query: Sendable {
             if command == "/regex" {
                 let remainder = tokens.dropFirst(index + 1).joined(separator: " ")
                 plan.regularExpression = remainder
-                if remainder.isEmpty { plan.isValid = false }
+                if group > 0 {
+                    invalidate(&plan, "/regex cannot be used as an /or alternative.")
+                } else if remainder.isEmpty {
+                    invalidate(&plan, "/regex needs a pattern and must be last.")
+                }
                 break
             }
 
-            guard index + 1 < tokens.count else { plan.isValid = false; break }
+            guard index + 1 < tokens.count else {
+                invalidate(&plan, "\(command) needs one argument.")
+                break
+            }
             let argument = tokens[index + 1]
             switch command {
             case "/filetype":
@@ -162,38 +185,50 @@ public struct Query: Sendable {
                 let extensions = values.map {
                     String($0).trimmingCharacters(in: CharacterSet(charactersIn: "."))
                 }
-                plan.fileTypes.append(contentsOf: extensions)
                 if extensions.isEmpty || extensions.contains(where: { $0.isEmpty }) {
-                    plan.isValid = false
+                    invalidate(&plan, "/filetype expects comma-separated extensions, such as md,docx.")
+                } else if group > 0, plan.termGroups[group].isEmpty {
+                    plan.alternativeFileTypes[group, default: []].append(contentsOf: extensions)
+                } else {
+                    plan.fileTypes.append(contentsOf: extensions)
                 }
             case "/in":
                 let path = expandPath(argument)
                 if path.hasPrefix("/") { plan.directories.append(path) }
-                else { plan.isValid = false }
+                else { invalidate(&plan, "/in expects an absolute path or one beginning with ~.") }
             case "/limit":
                 if let value = Int(argument), value > 0 { plan.limit = min(value, 10_000) }
-                else { plan.isValid = false }
+                else { invalidate(&plan, "/limit expects a positive number.") }
             case "/modified":
                 if let value = parseModified(argument) { plan.modified.append(value) }
-                else { plan.isValid = false }
+                else { invalidate(&plan, "/modified expects today, Nd, DATE, or DATE..DATE.") }
             case "/not":
                 plan.excludedTerms.append(argument)
             case "/size":
                 if let value = parseSize(argument) { plan.sizes.append(value) }
-                else { plan.isValid = false }
+                else { invalidate(&plan, "/size expects bytes such as >100mb or 1mb..1gb.") }
             case "/type":
                 switch argument.lowercased() {
                 case "file", "files": plan.kind = .file
                 case "folder", "folders", "directory", "directories": plan.kind = .folder
-                default: plan.isValid = false
+                default: invalidate(&plan, "/type expects file or folder.")
                 }
             default:
                 break
             }
             index += 2
         }
-        if plan.termGroups.count > 1, plan.termGroups.last?.isEmpty == true { plan.isValid = false }
+        if plan.termGroups.count > 1,
+           plan.termGroups.last?.isEmpty == true,
+           plan.alternativeFileTypes[plan.termGroups.count - 1] == nil {
+            invalidate(&plan, "/or needs a search expression on both sides.")
+        }
         return plan
+    }
+
+    private static func invalidate(_ plan: inout Plan, _ message: String) {
+        plan.isValid = false
+        if plan.validationMessage == nil { plan.validationMessage = message }
     }
 
     private static func containsKnownCommand(in text: String) -> Bool {

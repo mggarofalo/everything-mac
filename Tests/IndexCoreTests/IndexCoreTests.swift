@@ -92,6 +92,15 @@ final class IndexCoreTests: XCTestCase {
         XCTAssertFalse(Query(text: "handoff /or").plan.isValid)
         XCTAssertFalse(Query(text: "/type device").plan.isValid)
         XCTAssertFalse(Query(text: "/in Documents").plan.isValid)
+        let alternatives = Query(
+            text: "/in /Users/me/Desktop rx /or codex /or release /or marvel /or /filetype md"
+        ).plan
+        XCTAssertTrue(alternatives.isValid)
+        XCTAssertEqual(alternatives.termGroups,
+                       [["rx"], ["codex"], ["release"], ["marvel"], []])
+        XCTAssertEqual(alternatives.alternativeFileTypes[4], ["md"])
+        XCTAssertNotNil(Query(text: "marvel /or").plan.validationMessage)
+        XCTAssertNotNil(Query(text: "/unknown value").plan.validationMessage)
     }
 
     func testComposableSlashCommandSearch() {
@@ -116,6 +125,9 @@ final class IndexCoreTests: XCTestCase {
         let archived = store.append(name: "handoff.md", parent: archive,
                                     size: 2 * 1_048_576, mtime: current - 30 * 86_400,
                                     isDir: false, volID: 1)
+        let notes = store.append(name: "notes.md", parent: documents,
+                                 size: 20, mtime: current,
+                                 isDir: false, volID: 1)
         let outside = store.append(name: "handoff.md", parent: root,
                                    size: 2 * 1_048_576, mtime: current,
                                    isDir: false, volID: 1)
@@ -131,6 +143,14 @@ final class IndexCoreTests: XCTestCase {
             Query(text: "handoff /or proposal /in /Users/me/Documents /type file"),
             in: store, componentIndex: index
         ), [handoff, proposal, archived])
+        XCTAssertEqual(engine.search(
+            Query(text: "/in /Users/me/Documents handoff /or proposal /or /filetype md /type file"),
+            in: store, componentIndex: index
+        ), [handoff, proposal, archived, notes])
+        XCTAssertEqual(engine.search(
+            Query(text: "/filetype md handoff /or proposal"),
+            in: store, componentIndex: index
+        ), [handoff, archived, outside])
         XCTAssertEqual(engine.search(
             Query(text: "handoff /not Archive /in /Users/me/Documents"),
             in: store, componentIndex: index
