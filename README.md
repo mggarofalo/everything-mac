@@ -69,6 +69,22 @@ The first launch scans the whole disk and writes the index to a cache, so it tak
 
 Launch it and start typing. Matches show up right away. Click a column header to sort. Double-click a row to open it, or right-click for Open With, Reveal in Finder, Copy Path, Move to Trash, and the rest.
 
+The sliders button at the right of the search field contains Match Path, Match Case,
+Match Whole Word, and Regular Expression options. The options are remembered between
+launches.
+
+Two slash commands are also available:
+
+- `/filetype md` finds files whose extension is `.md`.
+- `/filetype doc docx` finds either `.doc` or `.docx` files.
+- `/regex handoff\.md$` uses a regular expression. This example finds names ending
+  in `handoff.md`; `\.` means a literal dot and `$` means the end of the name.
+
+`/regex` consumes everything after the command as the expression. The Regex menu
+option treats the entire field as an expression without requiring the command.
+Regex normally examines the filename; enable Match Path to examine the full path.
+Match Case applies to regex, while Match Whole Word applies only to ordinary text.
+
 ## How it works
 
 - Every filename lives in one big UTF-8 buffer, with the metadata (size, dates, flags) held in parallel arrays alongside it. That whole structure gets written to a binary cache so restarts are fast.

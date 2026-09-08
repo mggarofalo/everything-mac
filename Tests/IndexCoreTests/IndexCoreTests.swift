@@ -3,6 +3,56 @@ import XCTest
 @testable import IndexCore
 
 final class IndexCoreTests: XCTestCase {
+    func testSlashCommandParsing() {
+        XCTAssertEqual(Query(text: "/filetype md docx").expression,
+                       .fileTypes(["md", "docx"]))
+        XCTAssertEqual(Query(text: "/filetype .MD").expression,
+                       .fileTypes(["MD"]))
+        XCTAssertEqual(Query(text: #"/regex ^handoff\.md$"#).expression,
+                       .regularExpression(#"^handoff\.md$"#))
+        XCTAssertEqual(Query(text: "report", usesRegularExpression: true).expression,
+                       .regularExpression("report"))
+        XCTAssertEqual(Query(text: "/regexical notes").expression,
+                       .terms(["/regexical", "notes"]))
+    }
+
+    func testFileTypeAndRegularExpressionSearch() {
+        var store = FileStore()
+        let root = store.append(name: "/", parent: FileStore.noParent, size: 0,
+                                mtime: 0, isDir: true, volID: 1)
+        let desktop = store.append(name: "Desktop", parent: root, size: 0,
+                                   mtime: 0, isDir: true, volID: 1)
+        let markdown = store.append(name: "handoff.md", parent: desktop, size: 1,
+                                    mtime: 0, isDir: false, volID: 1)
+        let uppercase = store.append(name: "NOTES.MD", parent: root, size: 1,
+                                     mtime: 0, isDir: false, volID: 1)
+        let document = store.append(name: "proposal.docx", parent: root, size: 1,
+                                    mtime: 0, isDir: false, volID: 1)
+        var index = ComponentSearchIndex()
+        XCTAssertTrue(index.rebuild(with: store))
+        let engine = QueryEngine()
+
+        XCTAssertEqual(engine.search(Query(text: "/filetype md"), in: store,
+                                     componentIndex: index), [markdown, uppercase])
+        XCTAssertEqual(engine.search(Query(text: "/filetype doc md"), in: store,
+                                     componentIndex: index), [markdown, uppercase])
+        XCTAssertEqual(engine.search(Query(text: "/filetype doc docx"), in: store,
+                                     componentIndex: index), [document])
+        XCTAssertEqual(engine.search(Query(text: #"/regex ^handoff\.md$"#), in: store,
+                                     componentIndex: index), [markdown])
+        XCTAssertEqual(engine.search(Query(text: #"/regex .*handoff\.md$"#), in: store,
+                                     componentIndex: index), [markdown])
+        XCTAssertEqual(engine.search(Query(text: "/regex handoff|proposal"), in: store,
+                                     componentIndex: index), [markdown, document])
+        XCTAssertEqual(engine.search(Query(text: #"/regex \u0068andoff\.md$"#), in: store,
+                                     componentIndex: index), [markdown])
+        XCTAssertEqual(engine.search(Query(text: #"Desktop/.+\.md$"#, matchPath: true,
+                                            usesRegularExpression: true),
+                                     in: store, componentIndex: index), [markdown])
+        XCTAssertEqual(engine.search(Query(text: "[", usesRegularExpression: true),
+                                     in: store, componentIndex: index), [])
+    }
+
     func testPlainMatchPathTermsPropagateThroughAncestors() {
         var store = FileStore()
         let root = store.append(name: "/", parent: FileStore.noParent, size: 0,

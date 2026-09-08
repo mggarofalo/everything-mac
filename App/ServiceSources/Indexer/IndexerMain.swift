@@ -102,6 +102,7 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
             let records = await index.search(query.text, matchPath: query.matchPath,
                                              caseInsensitive: query.caseInsensitive,
                                              wholeWord: query.wholeWord,
+                                             usesRegularExpression: query.usesRegularExpression,
                                              sort: sortKey(query.sort), ascending: query.ascending,
                                              limit: min(max(1, query.limit), 10_000),
                                              isCancelled: { [latestSearch] in

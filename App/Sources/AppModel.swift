@@ -15,6 +15,7 @@ final class AppModel: ObservableObject {
     // re-runs the query instantly without re-indexing.
     @Published var caseSensitive = false
     @Published var wholeWord = false
+    @Published var usesRegularExpression = false
     // Max rows handed to the table — the old hardcoded 5000 cap, now user-tunable.
     @Published var resultLimit = 5000
     @Published var rules: ExcludeRules = .defaults
@@ -137,7 +138,9 @@ final class AppModel: ObservableObject {
         searchSeq &+= 1
         let mySeq = searchSeq
         let r = await index.search(query, matchPath: matchPath, caseInsensitive: !caseSensitive,
-                                   wholeWord: wholeWord, sort: sortKey, ascending: ascending, limit: resultLimit)
+                                   wholeWord: wholeWord,
+                                   usesRegularExpression: usesRegularExpression,
+                                   sort: sortKey, ascending: ascending, limit: resultLimit)
         // Only the most recently started search may publish — stops a slower
         // in-flight search (e.g. from a live-refresh tick) clobbering newer
         // results with a stale sort order.
@@ -164,6 +167,7 @@ final class AppModel: ObservableObject {
         matchPath = d.bool(forKey: "pref.matchPath")
         caseSensitive = d.bool(forKey: "pref.caseSensitive")
         wholeWord = d.bool(forKey: "pref.wholeWord")
+        usesRegularExpression = d.bool(forKey: "pref.usesRegularExpression")
         let lim = d.integer(forKey: "pref.resultLimit")
         resultLimit = lim > 0 ? min(max(lim, 100), 10_000) : 5000
         if let sk = d.string(forKey: "pref.sortKey") { sortKey = Self.sortKey(from: sk) }
@@ -175,6 +179,7 @@ final class AppModel: ObservableObject {
         d.set(matchPath, forKey: "pref.matchPath")
         d.set(caseSensitive, forKey: "pref.caseSensitive")
         d.set(wholeWord, forKey: "pref.wholeWord")
+        d.set(usesRegularExpression, forKey: "pref.usesRegularExpression")
         d.set(resultLimit, forKey: "pref.resultLimit")
         d.set(Self.sortKeyName(sortKey), forKey: "pref.sortKey")
         d.set(ascending, forKey: "pref.ascending")

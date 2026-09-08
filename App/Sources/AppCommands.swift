@@ -25,6 +25,10 @@ struct AppCommands: Commands {
         Binding(get: { model.wholeWord },
                 set: { model.wholeWord = $0; model.searchOptionsChanged() })
     }
+    private var regularExpressionBinding: Binding<Bool> {
+        Binding(get: { model.usesRegularExpression },
+                set: { model.usesRegularExpression = $0; model.searchOptionsChanged() })
+    }
 
     var body: some Commands {
         // FILE — act on the selected result, plus index/export actions.
@@ -88,6 +92,8 @@ struct AppCommands: Commands {
                 .keyboardShortcut("p", modifiers: [.command, .shift])
             Toggle("Match Case", isOn: caseSensitiveBinding)
             Toggle("Match Whole Word", isOn: wholeWordBinding)
+                .disabled(model.usesRegularExpression)
+            Toggle("Regular Expression", isOn: regularExpressionBinding)
         }
 
         // HELP — point at the project instead of the empty default Help menu.

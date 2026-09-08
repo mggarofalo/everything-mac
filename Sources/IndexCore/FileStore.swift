@@ -113,6 +113,21 @@ public struct FileStore: Sendable {
         return (start + dot + 1, len - dot - 1)
     }
 
+    /// Exact ASCII-case-insensitive extension match without allocating a String.
+    /// `extensionLowerBytes` must already contain lowercase ASCII without a dot.
+    public func extensionMatches(_ extensionLowerBytes: [UInt8], of id: UInt32) -> Bool {
+        let range = extRange(of: id)
+        guard range.len == extensionLowerBytes.count else { return false }
+        return nameBytes.withUnsafeBufferPointer { bytes in
+            for offset in 0..<range.len {
+                var byte = bytes[range.start + offset]
+                if byte >= 65 && byte <= 90 { byte &+= 32 }
+                if byte != extensionLowerBytes[offset] { return false }
+            }
+            return true
+        }
+    }
+
     // Order by file "kind": directories first (grouped), then files grouped by
     // extension (ASCII case-insensitive), with name as the tiebreak so equal
     // kinds stay name-ordered. Same allocation-free byte path as nameSortsBefore.

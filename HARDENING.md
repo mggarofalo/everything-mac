@@ -39,8 +39,9 @@ Full Disk Access to a locally signed application.
 
 ## Verification
 
-- `swift test`: nine tests pass, including live FSEvents delivery, indexed Match
-  Path semantics, incremental additions/deletions, and search cancellation.
+- `swift test`: eleven tests pass, including live FSEvents delivery, indexed Match
+  Path semantics, incremental additions/deletions, slash-command parsing, filetype
+  and regex semantics, and search cancellation.
 - Xcode Release build: succeeds with Swift 6.
 - Installed bundle: `codesign --verify --deep --strict` succeeds.
 - Signature: Team ID `649367BDD4`, hardened-runtime flag present, no
@@ -67,6 +68,11 @@ Full Disk Access to a locally signed application.
   The installed indexer measured 174 MB RSS immediately after rebuilding and 218 MB
   after the live search smoke test, down from the prior implementation's roughly
   610 MB initial steady-state measurement.
+- Extended search: `/filetype md` returned 50,444 records in 7 ms. Indexed regexes
+  `handoff\.md$` and `.*handoff\.md$` returned 43 records in 0.2–1.8 ms. A broad
+  filename regex with no mandatory literal took 0.9 seconds; the corresponding
+  worst-case full-path scan took 8.0 seconds. Those fallbacks run in parallel and
+  remain cancellable by newer input.
 
 ## Installation experience
 

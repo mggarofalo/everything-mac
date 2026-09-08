@@ -38,10 +38,12 @@ actor SearchClient {
     }
 
     func search(_ text: String, matchPath: Bool, caseInsensitive: Bool = true,
-                wholeWord: Bool = false, sort: QueryEngine.SortKey,
+                wholeWord: Bool = false, usesRegularExpression: Bool = false,
+                sort: QueryEngine.SortKey,
                 ascending: Bool, limit: Int = 5000) async -> [FileRecord] {
         let request = SearchRequest(text: text, matchPath: matchPath,
                                     caseInsensitive: caseInsensitive, wholeWord: wholeWord,
+                                    usesRegularExpression: usesRegularExpression,
                                     sort: sortKeyName(sort), ascending: ascending,
                                     limit: limit)
         return (try? await call(.search, payload: request, as: SearchResponse.self).records) ?? []

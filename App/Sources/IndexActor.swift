@@ -69,16 +69,20 @@ actor IndexActor {
     }
 
     func search(_ text: String, matchPath: Bool, caseInsensitive: Bool = true, wholeWord: Bool = false,
+                usesRegularExpression: Bool = false,
                 sort: QueryEngine.SortKey, ascending: Bool, limit: Int = 5000,
                 isCancelled: @Sendable () -> Bool = { false }) async -> [FileRecord] {
         // Re-scan only when the query (not the sort) changed. The key folds in every
-        // flag that changes which ids match — matchPath, case sensitivity, whole-word —
+        // flag that changes which ids match — matchPath, case sensitivity, whole-word,
+        // and regular-expression mode —
         // so flipping any of them invalidates the cache. engine.search already excludes
         // tombstoned ids, so no separate isLive filter pass is needed.
-        let key = (matchPath ? "P" : "N") + (caseInsensitive ? "i" : "s") + (wholeWord ? "w" : "x") + "\u{1}" + text
+        let key = (matchPath ? "P" : "N") + (caseInsensitive ? "i" : "s")
+            + (wholeWord ? "w" : "x") + (usesRegularExpression ? "r" : "t") + "\u{1}" + text
         if key != cachedQueryKey {
             let query = Query(text: text, matchPath: matchPath,
-                              caseInsensitive: caseInsensitive, wholeWord: wholeWord)
+                              caseInsensitive: caseInsensitive, wholeWord: wholeWord,
+                              usesRegularExpression: usesRegularExpression)
             let matches: [UInt32]
             if query.terms.isEmpty {
                 matches = engine.search(query, in: store, isCancelled: isCancelled)

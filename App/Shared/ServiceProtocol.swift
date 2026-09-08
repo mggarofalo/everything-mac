@@ -47,6 +47,7 @@ struct SearchRequest: Codable, Sendable {
     let matchPath: Bool
     let caseInsensitive: Bool
     let wholeWord: Bool
+    let usesRegularExpression: Bool
     let sort: String
     let ascending: Bool
     let limit: Int

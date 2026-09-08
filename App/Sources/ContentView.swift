@@ -20,7 +20,14 @@ struct ContentView: View {
                 .background(.yellow.opacity(0.2))
                 Divider()
             }
-            SearchField(text: $model.query, matchPath: $model.matchPath, focused: $searchFocused) { model.queryChanged() }
+            SearchField(text: $model.query,
+                        matchPath: $model.matchPath,
+                        caseSensitive: $model.caseSensitive,
+                        wholeWord: $model.wholeWord,
+                        usesRegularExpression: $model.usesRegularExpression,
+                        focused: $searchFocused,
+                        onTextChange: { model.queryChanged() },
+                        onOptionsChange: { model.searchOptionsChanged() })
             Divider()
             ResultsTable(rows: model.results,
                          onSort: { k, a in model.setSort(k, ascending: a) },

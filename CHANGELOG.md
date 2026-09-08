@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.0
+
+- Add /filetype md and multi-extension searches such as /filetype doc docx.
+- Add regular-expression search through /regex pattern or the persistent Regex option.
+- Replace the search-field Match Path switch with a native sliders menu containing
+  Match Path, Match Case, Match Whole Word, and Regular Expression.
+- Seed common regex forms from mandatory literals in the trigram index and parallelize
+  expressions that require a full scan.
+
 ## 0.5.2
 
 - Delta-encode trigram posting IDs into a single byte arena, reducing the measured

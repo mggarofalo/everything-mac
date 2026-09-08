@@ -35,6 +35,18 @@ public struct QueryEngine: Sendable {
     public func search(_ query: Query, in store: FileStore,
                        componentIndex: ComponentSearchIndex? = nil,
                        isCancelled: @Sendable () -> Bool = { false }) -> [UInt32] {
+        switch query.expression {
+        case .regularExpression(let pattern):
+            return regularExpressionSearch(pattern, query: query, in: store,
+                                           componentIndex: componentIndex,
+                                           isCancelled: isCancelled)
+        case .fileTypes(let extensions):
+            return fileTypeSearch(extensions, in: store, componentIndex: componentIndex,
+                                  isCancelled: isCancelled)
+        case .terms:
+            break
+        }
+
         let normalizedQuery: Query
         if query.matchPath, query.text.contains("\\") {
             normalizedQuery = Query(text: query.text.replacingOccurrences(of: "\\", with: "/"),
@@ -61,6 +73,216 @@ public struct QueryEngine: Sendable {
             }
         }
         return refined
+    }
+
+    private func fileTypeSearch(
+        _ extensions: [String],
+        in store: FileStore,
+        componentIndex: ComponentSearchIndex?,
+        isCancelled: @Sendable () -> Bool
+    ) -> [UInt32] {
+        let requested = Array(Set(extensions.compactMap(Glob.asciiLowerBytes))).filter { !$0.isEmpty }
+        guard !requested.isEmpty else { return [] }
+
+        var result = Set<UInt32>()
+        var scanExtensions: [[UInt8]] = []
+        for bytes in requested {
+            let suffix = [UInt8(46)] + bytes
+            let suffixText = String(decoding: suffix, as: UTF8.self)
+            if suffix.count >= 3,
+               let candidates = componentIndex?.candidates(
+                   for: Query(text: suffixText, caseInsensitive: true), in: store,
+                   isCancelled: isCancelled
+               ) {
+                for (offset, id) in candidates.enumerated() {
+                    if offset & 0xFFF == 0, isCancelled() { return [] }
+                    if store.extensionMatches(bytes, of: id) { result.insert(id) }
+                }
+            } else {
+                scanExtensions.append(bytes)
+            }
+        }
+
+        if !scanExtensions.isEmpty {
+            for index in 0..<store.count {
+                if index & 0xFFF == 0, isCancelled() { return [] }
+                let id = UInt32(index)
+                guard store.isLive(id) else { continue }
+                if scanExtensions.contains(where: { store.extensionMatches($0, of: id) }) {
+                    result.insert(id)
+                }
+            }
+        }
+        return result.sorted()
+    }
+
+    private func regularExpressionSearch(
+        _ pattern: String,
+        query: Query,
+        in store: FileStore,
+        componentIndex: ComponentSearchIndex?,
+        isCancelled: @Sendable () -> Bool
+    ) -> [UInt32] {
+        guard !pattern.isEmpty else { return [] }
+        let options: NSRegularExpression.Options = query.caseInsensitive ? [.caseInsensitive] : []
+        guard let expression = try? NSRegularExpression(pattern: pattern, options: options) else {
+            return []
+        }
+
+        let candidates: [UInt32]?
+        if let literal = Self.requiredLiteral(in: pattern), literal.utf8.count >= 3,
+           let indexed = componentIndex?.candidates(
+               for: Query(text: literal, matchPath: query.matchPath,
+                          caseInsensitive: query.caseInsensitive),
+               in: store, isCancelled: isCancelled
+           ) {
+            candidates = indexed
+        } else {
+            candidates = nil
+        }
+
+        var result: [UInt32] = []
+        result.reserveCapacity(16_384)
+        if let candidates {
+            for (offset, id) in candidates.enumerated() {
+                if offset & 0x3FF == 0, isCancelled() { return [] }
+                if Self.matches(expression, id: id, query: query, in: store) { result.append(id) }
+            }
+            return result
+        }
+
+        if store.count < 100_000 {
+            return regexScanRange(0, UInt32(store.count), expression: expression,
+                                  query: query, in: store, isCancelled: isCancelled)
+        }
+        let chunks = max(2, ProcessInfo.processInfo.activeProcessorCount)
+        let span = (store.count + chunks - 1) / chunks
+        let parts = ChunkResults(count: chunks)
+        DispatchQueue.concurrentPerform(iterations: chunks) { chunk in
+            let lower = chunk * span
+            let upper = min(store.count, lower + span)
+            guard lower < upper else { return }
+            parts.set(regexScanRange(UInt32(lower), UInt32(upper), expression: expression,
+                                     query: query, in: store, isCancelled: isCancelled),
+                      at: chunk)
+        }
+        return parts.flattened()
+    }
+
+    private func regexScanRange(_ lower: UInt32, _ upper: UInt32,
+                                expression: NSRegularExpression, query: Query,
+                                in store: FileStore,
+                                isCancelled: @Sendable () -> Bool) -> [UInt32] {
+        var result: [UInt32] = []
+        result.reserveCapacity(Int(upper - lower) / 64 + 16)
+        var id = lower
+        while id < upper {
+            if id & 0x3FF == 0, isCancelled() { return [] }
+            if Self.matches(expression, id: id, query: query, in: store) { result.append(id) }
+            id &+= 1
+        }
+        return result
+    }
+
+    private static func matches(_ expression: NSRegularExpression, id: UInt32,
+                                query: Query, in store: FileStore) -> Bool {
+        guard store.isLive(id) else { return false }
+        let text = query.matchPath ? store.path(of: id) : store.name(of: id)
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return expression.firstMatch(in: text, options: [], range: range) != nil
+    }
+
+    /// Extract the longest top-level literal that every match must contain. This
+    /// recognizes common forms such as `.*handoff\.md$`; alternation and groups are
+    /// deliberately left to the exact fallback because choosing one branch as a
+    /// seed would create false negatives.
+    private static func requiredLiteral(in pattern: String) -> String? {
+        guard !hasUnescaped(pattern, anyOf: "|()") else { return nil }
+        let characters = Array(pattern)
+        var runs: [String] = []
+        var current = ""
+        var previousAtomWasLiteral = false
+        var index = 0
+
+        func finishRun() {
+            if !current.isEmpty { runs.append(current); current = "" }
+        }
+
+        while index < characters.count {
+            let character = characters[index]
+            if character == "\\" {
+                guard index + 1 < characters.count else { finishRun(); break }
+                let escaped = characters[index + 1]
+                // Escaped punctuation (for example `\.`) is literal. Escaped
+                // letters and digits may be ICU character classes, control
+                // escapes, Unicode/hex escapes, or backreferences, so treating
+                // them as mandatory text could incorrectly discard matches.
+                if escaped.isLetter || escaped.isNumber {
+                    return nil
+                } else {
+                    current.append(escaped)
+                    previousAtomWasLiteral = true
+                }
+                index += 2
+                continue
+            }
+            if character == "[" {
+                finishRun()
+                previousAtomWasLiteral = false
+                index += 1
+                var escaped = false
+                while index < characters.count {
+                    let next = characters[index]
+                    index += 1
+                    if escaped { escaped = false; continue }
+                    if next == "\\" { escaped = true; continue }
+                    if next == "]" { break }
+                }
+                continue
+            }
+            if character == "?" || character == "*" {
+                if previousAtomWasLiteral, !current.isEmpty { current.removeLast() }
+                finishRun()
+                previousAtomWasLiteral = false
+                index += 1
+                continue
+            }
+            if character == "{" {
+                let closing = characters[(index + 1)...].firstIndex(of: "}")
+                guard let closing else { finishRun(); break }
+                let quantifier = String(characters[(index + 1)..<closing])
+                let minimum = Int(quantifier.split(separator: ",", omittingEmptySubsequences: false).first ?? "") ?? 0
+                if minimum == 0, previousAtomWasLiteral, !current.isEmpty { current.removeLast() }
+                if minimum == 0 { finishRun() }
+                index = closing + 1
+                continue
+            }
+            if character == "." {
+                finishRun()
+                previousAtomWasLiteral = false
+            } else if character == "^" || character == "$" {
+                finishRun()
+                previousAtomWasLiteral = false
+            } else if character == "+" {
+                // One or more preserves the preceding atom as mandatory.
+            } else {
+                current.append(character)
+                previousAtomWasLiteral = true
+            }
+            index += 1
+        }
+        finishRun()
+        return runs.max { $0.utf8.count < $1.utf8.count }
+    }
+
+    private static func hasUnescaped(_ pattern: String, anyOf metacharacters: String) -> Bool {
+        var escaped = false
+        for character in pattern {
+            if escaped { escaped = false; continue }
+            if character == "\\" { escaped = true; continue }
+            if metacharacters.contains(character) { return true }
+        }
+        return false
     }
 
     // Every plain (non-wildcard) term must occur as a whole word in the candidate's
