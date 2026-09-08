@@ -118,15 +118,11 @@ final class AppModel: ObservableObject {
     func queryChanged() {
         savePrefs()   // also captures a Match-path toggle (shares this entry point)
         task?.cancel()
-        let isSlashCommandPrefix = Query(text: query).isSlashCommandPrefix
-        if isSlashCommandPrefix {
-            results = []
-        }
         task = Task {
             // Cancelling this Swift task cannot retract an XPC request that was
             // already delivered. Invalidate it before issuing its replacement.
             await index.cancelPendingSearch()
-            if Task.isCancelled || isSlashCommandPrefix { return }
+            if Task.isCancelled { return }
             try? await Task.sleep(nanoseconds: 40_000_000) // debounce 40ms
             if Task.isCancelled { return }
             await runSearch()
@@ -183,7 +179,8 @@ final class AppModel: ObservableObject {
         matchPath = d.bool(forKey: "pref.matchPath")
         caseSensitive = d.bool(forKey: "pref.caseSensitive")
         wholeWord = d.bool(forKey: "pref.wholeWord")
-        usesRegularExpression = d.bool(forKey: "pref.usesRegularExpression")
+        // Regular expressions now compose explicitly as regex: predicates.
+        usesRegularExpression = false
         let lim = d.integer(forKey: "pref.resultLimit")
         resultLimit = lim > 0 ? min(max(lim, 100), 10_000) : 5000
         if let sk = d.string(forKey: "pref.sortKey") { sortKey = Self.sortKey(from: sk) }

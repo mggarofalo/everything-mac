@@ -3,6 +3,80 @@ import XCTest
 @testable import IndexCore
 
 final class IndexCoreTests: XCTestCase {
+    func testBooleanFilterParsing() {
+        let desktop = Query(text: "in:~/Desktop").plan.filterExpression
+        let downloads = Query(text: "in:~/Downloads").plan.filterExpression
+        XCTAssertEqual(
+            Query(text: "in:~/Desktop OR in:~/Downloads").plan.filterExpression,
+            .or([desktop!, downloads!])
+        )
+
+        XCTAssertEqual(
+            Query(text: "marvel in:~/Desktop").plan.filterExpression,
+            .and([.predicate(.text("marvel")), desktop!])
+        )
+        let grouped = Query(
+            text: "(marvel in:~/Desktop) OR (codex in:~/Downloads type:folder)"
+        ).plan
+        XCTAssertTrue(grouped.isValid)
+        XCTAssertNotNil(grouped.filterExpression)
+        XCTAssertEqual(Query(text: "lowercase or is text").plan.filterExpression, nil)
+        XCTAssertFalse(Query(text: "marvel OR").plan.isValid)
+        XCTAssertFalse(Query(text: "in:").plan.isValid)
+        XCTAssertFalse(Query(text: "(marvel OR codex").plan.isValid)
+        XCTAssertEqual(Query(text: "limit:17").requestedLimit, 17)
+        XCTAssertEqual(Query(text: "marvel OR limit:17").plan.filterExpression,
+                       .predicate(.text("marvel")))
+    }
+
+    func testBooleanFilterSearch() {
+        var store = FileStore()
+        let root = store.append(name: "/", parent: FileStore.noParent, size: 0,
+                                mtime: 0, isDir: true, volID: 1)
+        let users = store.append(name: "Users", parent: root, size: 0,
+                                 mtime: 0, isDir: true, volID: 1)
+        let me = store.append(name: "me", parent: users, size: 0,
+                              mtime: 0, isDir: true, volID: 1)
+        let desktop = store.append(name: "Desktop", parent: me, size: 0,
+                                   mtime: 0, isDir: true, volID: 1)
+        let downloads = store.append(name: "Downloads", parent: me, size: 0,
+                                     mtime: 0, isDir: true, volID: 1)
+        let marvel = store.append(name: "marvel-notes.txt", parent: desktop,
+                                  size: 10, mtime: 100, isDir: false, volID: 1)
+        let desktopMarkdown = store.append(name: "notes.md", parent: desktop,
+                                           size: 20, mtime: 200, isDir: false, volID: 1)
+        let codexFolder = store.append(name: "Codex", parent: downloads,
+                                       size: 0, mtime: 300, isDir: true, volID: 1)
+        let unrelated = store.append(name: "other.pdf", parent: root,
+                                     size: 30, mtime: 400, isDir: false, volID: 1)
+        var index = ComponentSearchIndex()
+        XCTAssertTrue(index.rebuild(with: store))
+        let engine = QueryEngine()
+
+        XCTAssertEqual(engine.search(
+            Query(text: "in:/Users/me/Desktop OR in:/Users/me/Downloads"),
+            in: store, componentIndex: index
+        ), [desktop, downloads, marvel, desktopMarkdown, codexFolder])
+        XCTAssertEqual(engine.search(
+            Query(text: "(marvel in:/Users/me/Desktop) OR (codex in:/Users/me/Downloads type:folder)"),
+            in: store, componentIndex: index
+        ), [marvel, codexFolder])
+        XCTAssertEqual(engine.search(
+            Query(text: "in:/Users/me/Desktop (marvel OR filetype:md)"),
+            in: store, componentIndex: index
+        ), [marvel, desktopMarkdown])
+        XCTAssertEqual(engine.search(
+            Query(text: "in:/Users/me/Desktop XOR in:/Users/me/Downloads"),
+            in: store, componentIndex: index
+        ), [desktop, downloads, marvel, desktopMarkdown, codexFolder])
+        XCTAssertEqual(engine.search(
+            Query(text: "in:/Users/me/Desktop NOT filetype:md"),
+            in: store, componentIndex: index
+        ), [desktop, marvel])
+        XCTAssertTrue(engine.search(Query(text: "type:file"), in: store,
+                                    componentIndex: index).contains(unrelated))
+    }
+
     func testSlashCommandParsing() {
         XCTAssertEqual(Query(text: "/filetype md,docx").expression,
                        .fileTypes(["md", "docx"]))

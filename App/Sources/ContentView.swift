@@ -24,7 +24,6 @@ struct ContentView: View {
                         matchPath: $model.matchPath,
                         caseSensitive: $model.caseSensitive,
                         wholeWord: $model.wholeWord,
-                        usesRegularExpression: $model.usesRegularExpression,
                         focused: $searchFocused,
                         onTextChange: { model.queryChanged() },
                         onOptionsChange: { model.searchOptionsChanged() })

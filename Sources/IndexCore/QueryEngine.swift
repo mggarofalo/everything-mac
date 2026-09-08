@@ -37,6 +37,11 @@ public struct QueryEngine: Sendable {
                        isCancelled: @Sendable () -> Bool = { false }) -> [UInt32] {
         let plan = query.plan
         guard plan.isValid else { return [] }
+        if let expression = plan.filterExpression {
+            return expressionSearch(expression, query: query, in: store,
+                                    componentIndex: componentIndex,
+                                    isCancelled: isCancelled)
+        }
         let extensionBytes = plan.fileTypes.compactMap(Glob.asciiLowerBytes)
         let alternativeExtensions = plan.alternativeFileTypes.mapValues {
             $0.compactMap(Glob.asciiLowerBytes)
@@ -121,6 +126,204 @@ public struct QueryEngine: Sendable {
             if plan.regularExpression != nil, plan.hasPositiveTerms,
                !matchesAnyTermGroup(plan.termGroups, id: id, query: query, in: store) { continue }
             result.append(id)
+        }
+        return result
+    }
+
+    private func expressionSearch(
+        _ expression: Query.FilterExpression,
+        query: Query,
+        in store: FileStore,
+        componentIndex: ComponentSearchIndex?,
+        isCancelled: @Sendable () -> Bool
+    ) -> [UInt32] {
+        var regularExpressions: [String: NSRegularExpression] = [:]
+        var extensionBytes: [String: [UInt8]] = [:]
+
+        func matches(_ expression: Query.FilterExpression, id: UInt32) -> Bool {
+            switch expression {
+            case .predicate(let predicate):
+                guard store.isLive(id) else { return false }
+                switch predicate {
+                case .all:
+                    return true
+                case .text(let term):
+                    let text = query.matchPath ? store.path(of: id) : store.name(of: id)
+                    guard Glob.matches(pattern: term, in: text,
+                                       caseInsensitive: query.caseInsensitive) else { return false }
+                    return !query.wholeWord || term.contains("*") || term.contains("?") ||
+                        Glob.containsWholeWord(term, in: text,
+                                               caseInsensitive: query.caseInsensitive)
+                case .path(let term):
+                    let normalized = term.replacingOccurrences(of: "\\", with: "/")
+                    let path = store.path(of: id)
+                    guard Glob.matches(pattern: normalized, in: path,
+                                       caseInsensitive: query.caseInsensitive) else { return false }
+                    return !query.wholeWord || term.contains("*") || term.contains("?") ||
+                        Glob.containsWholeWord(normalized, in: path,
+                                               caseInsensitive: query.caseInsensitive)
+                case .directory(let directory):
+                    let path = store.path(of: id)
+                    if directory == "/" { return path.hasPrefix("/") }
+                    let options: String.CompareOptions = query.caseInsensitive ? [.caseInsensitive] : []
+                    return path.compare(directory, options: options) == .orderedSame ||
+                        path.range(of: directory + "/", options: options.union(.anchored)) != nil
+                case .fileTypes(let extensions):
+                    return extensions.contains { value in
+                        let key = value.lowercased()
+                        let bytes: [UInt8]
+                        if let cached = extensionBytes[key] {
+                            bytes = cached
+                        } else {
+                            bytes = Glob.asciiLowerBytes(key) ?? []
+                            extensionBytes[key] = bytes
+                        }
+                        return !bytes.isEmpty && store.extensionMatches(bytes, of: id)
+                    }
+                case .regularExpression(let pattern):
+                    let regularExpression: NSRegularExpression
+                    if let cached = regularExpressions[pattern] {
+                        regularExpression = cached
+                    } else {
+                        let options: NSRegularExpression.Options = query.caseInsensitive
+                            ? [.caseInsensitive] : []
+                        guard let compiled = try? NSRegularExpression(pattern: pattern,
+                                                                       options: options) else {
+                            return false
+                        }
+                        regularExpressions[pattern] = compiled
+                        regularExpression = compiled
+                    }
+                    return Self.matches(regularExpression, id: id, query: query, in: store)
+                case .kind(let kind):
+                    return kind == .folder ? store.isDir(of: id) : !store.isDir(of: id)
+                case .size(let constraint):
+                    return constraint.contains(store.size(of: id))
+                case .modified(let constraint):
+                    return constraint.contains(store.mtime(of: id))
+                }
+            case .and(let expressions):
+                return expressions.allSatisfy { matches($0, id: id) }
+            case .or(let expressions):
+                return expressions.contains { matches($0, id: id) }
+            case .xor(let left, let right):
+                return matches(left, id: id) != matches(right, id: id)
+            case .not(let excluded):
+                return !matches(excluded, id: id)
+            }
+        }
+
+        func scan(_ expression: Query.FilterExpression) -> [UInt32] {
+            var result: [UInt32] = []
+            result.reserveCapacity(min(store.count / 64 + 16, 16_384))
+            for index in 0..<store.count {
+                if index & 0xFFF == 0, isCancelled() { return [] }
+                let id = UInt32(index)
+                if matches(expression, id: id) { result.append(id) }
+            }
+            return result
+        }
+
+        func rank(_ expression: Query.FilterExpression) -> Int {
+            switch expression {
+            case .predicate(.directory): return 0
+            case .predicate(.fileTypes), .predicate(.text), .predicate(.path): return 1
+            case .predicate(.regularExpression): return 2
+            case .or, .xor: return 3
+            case .and(let expressions): return expressions.map(rank).min() ?? 8
+            case .predicate(.kind), .predicate(.size), .predicate(.modified): return 7
+            case .predicate(.all), .not: return 9
+            }
+        }
+
+        func evaluate(_ expression: Query.FilterExpression) -> [UInt32] {
+            if isCancelled() { return [] }
+            switch expression {
+            case .predicate(let predicate):
+                switch predicate {
+                case .all:
+                    return rawSearch(Query(text: ""), in: store, isCancelled: isCancelled)
+                case .text(let term):
+                    return textSearch(
+                        Query(text: term, matchPath: query.matchPath,
+                              caseInsensitive: query.caseInsensitive,
+                              wholeWord: query.wholeWord),
+                        in: store, componentIndex: componentIndex,
+                        isCancelled: isCancelled
+                    )
+                case .path(let term):
+                    return textSearch(
+                        Query(text: term, matchPath: true,
+                              caseInsensitive: query.caseInsensitive,
+                              wholeWord: query.wholeWord),
+                        in: store, componentIndex: componentIndex,
+                        isCancelled: isCancelled
+                    )
+                case .directory(let path):
+                    return descendants(of: path, in: store, isCancelled: isCancelled) ?? []
+                case .fileTypes(let extensions):
+                    return fileTypeSearch(extensions, in: store,
+                                          componentIndex: componentIndex,
+                                          isCancelled: isCancelled)
+                case .regularExpression(let pattern):
+                    return regularExpressionSearch(pattern, query: query, in: store,
+                                                   componentIndex: componentIndex,
+                                                   isCancelled: isCancelled)
+                case .kind, .size, .modified:
+                    return scan(expression)
+                }
+            case .and(let expressions):
+                guard let seedIndex = expressions.indices.min(by: {
+                    rank(expressions[$0]) < rank(expressions[$1])
+                }) else { return [] }
+                let candidates = evaluate(expressions[seedIndex])
+                let refinements = expressions.indices.filter { $0 != seedIndex }.map { expressions[$0] }
+                guard !refinements.isEmpty else { return candidates }
+                var result: [UInt32] = []
+                result.reserveCapacity(min(candidates.count, 16_384))
+                for (offset, id) in candidates.enumerated() {
+                    if offset & 0xFFF == 0, isCancelled() { return [] }
+                    if refinements.allSatisfy({ matches($0, id: id) }) { result.append(id) }
+                }
+                return result
+            case .or(let expressions):
+                var result: [UInt32] = []
+                for alternative in expressions {
+                    result = mergeSortedUnique(result, evaluate(alternative),
+                                               isCancelled: isCancelled)
+                    if isCancelled() { return [] }
+                }
+                return result
+            case .xor(let left, let right):
+                return symmetricDifference(evaluate(left), evaluate(right),
+                                           isCancelled: isCancelled)
+            case .not:
+                return scan(expression)
+            }
+        }
+
+        return evaluate(expression)
+    }
+
+    private func symmetricDifference(_ left: [UInt32], _ right: [UInt32],
+                                     isCancelled: @Sendable () -> Bool) -> [UInt32] {
+        var result: [UInt32] = []
+        result.reserveCapacity(left.count + right.count)
+        var leftIndex = 0
+        var rightIndex = 0
+        while leftIndex < left.count || rightIndex < right.count {
+            if (leftIndex + rightIndex) & 0xFFF == 0, isCancelled() { return [] }
+            if rightIndex == right.count ||
+                (leftIndex < left.count && left[leftIndex] < right[rightIndex]) {
+                result.append(left[leftIndex])
+                leftIndex += 1
+            } else if leftIndex == left.count || right[rightIndex] < left[leftIndex] {
+                result.append(right[rightIndex])
+                rightIndex += 1
+            } else {
+                leftIndex += 1
+                rightIndex += 1
+            }
         }
         return result
     }

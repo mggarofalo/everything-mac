@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0
+
+- Replace slash-command composition with colon filters and a Boolean expression
+  grammar supporting implicit/explicit `AND`, `OR`, `XOR`, `NOT`, and parentheses.
+- Add token-aware filter/operator completion and render uppercase Boolean operators
+  as rounded pills while preserving plain-text editing and copy/paste.
+- Plan conjunctions from their most selective directory or indexed predicate, so
+  branch-local filters do not force whole-index scans.
+
 ## 0.7.1
 
 - Make `/filetype` consume one comma-separated argument, so ordinary filename

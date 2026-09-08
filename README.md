@@ -70,56 +70,45 @@ The first launch scans the whole disk and writes the index to a cache, so it tak
 Launch it and start typing. Matches show up right away. Click a column header to sort. Double-click a row to open it, or right-click for Open With, Reveal in Finder, Copy Path, Move to Trash, and the rest.
 
 The sliders button at the right of the search field contains Match Path, Match Case,
-Match Whole Word, and Regular Expression options. The options are remembered between
-launches.
+and Match Whole Word options. The options are remembered between launches.
 
-Slash commands can be combined with ordinary filename text:
+Filename text and metadata filters form Boolean expressions. Spaces imply `AND`;
+uppercase `AND`, `OR`, `XOR`, and `NOT` are operators. Parentheses control grouping.
+Operators appear as pills in the editor, while lowercase words such as `or` remain
+ordinary filename text.
 
-- `/in ~/Downloads` restricts results to that folder and its descendants. Use an
-  absolute path or a path beginning with `~`; quote paths containing spaces.
-- `/size >100mb` and `/size 1mb..10mb` filter by file size (`b`, `kb`, `mb`,
-  `gb`, and `tb` are accepted).
-- `/modified today`, `/modified 7d`, and `/modified 2026-09-01..2026-09-08`
-  filter by modification date.
-- `/type file` and `/type folder` restrict the result kind.
-- `/limit 100` returns at most 100 results, up to the limit configured in Settings.
-- `/not node_modules` excludes matching name or path text.
-- `invoice /or receipt` matches either side of `/or`. A file type can also be an
-  alternative: `invoice /or /filetype md`.
-- `/filetype md` finds `.md` files; `/filetype doc,docx` finds either extension.
-- `/regex handoff\.md$` finds names ending in `handoff.md`; `\.` means a literal
-  dot and `$` means the end of the name.
+- `in:~/Downloads` matches that folder and its descendants. Quote values containing
+  spaces, for example `in:"~/Project Files"`.
+- `filetype:md` finds Markdown files; `filetype:doc,docx` accepts either extension.
+- `type:file` and `type:folder` restrict the result kind.
+- `size:>100mb` and `size:1mb..10mb` filter by file size.
+- `modified:today`, `modified:7d`, and `modified:2026-09-01..2026-09-08` filter by date.
+- `path:Sources` always matches the full path; `name:Sources` always matches the name.
+- `regex:handoff\.md$` matches names ending in `handoff.md`; use `rx:` as a short alias.
+- `limit:100` caps the returned rows after filtering and sorting.
 
-Filters apply to the whole query, so they can be composed naturally:
+Examples:
 
 ```text
-handoff /in ~/Documents /filetype md /size >1mb
-invoice /or receipt /modified 7d /type file
-package /not node_modules /in ~/Source
-/in ~/Desktop rx /or codex /or release /or marvel /or /filetype md
+marvel in:~/Desktop
+in:~/Desktop OR in:~/Downloads
+(marvel in:~/Desktop) OR (codex in:~/Downloads type:folder)
+in:~/Desktop (rx OR codex OR release OR marvel OR filetype:md)
+package in:~/Source NOT path:node_modules
 ```
 
-Every command except `/or` takes exactly one argument. Use commas for multiple file
-types, so `/filetype md marvel` means Markdown files matching `marvel`, while
-`/filetype md,markdown` accepts either extension. `/regex` consumes everything after
-it and must be last.
-
-Invalid or incomplete command syntax is explained directly below the search field
-instead of silently producing an empty result list.
-
-Type `/` to see the available commands, then click one to insert it. Once the
-prefix identifies one command, press Tab to complete it (`/f` → `/filetype `).
-Completion also works after existing text (`invoice /mod` → `invoice /modified `).
-
-`/regex` consumes everything after the command as the expression. The Regex menu
-option treats the entire field as an expression without requiring the command.
-Regex normally examines the filename; enable Match Path to examine the full path.
-Match Case applies to regex, while Match Whole Word applies only to ordinary text.
+Type part of a filter or operator to open contextual suggestions, then press Tab or
+click a row to complete it. Invalid expressions are explained directly below the
+field. Regex normally examines the filename; enable Match Path to examine the full
+path. Quote regex values containing spaces or parentheses.
 
 ## How it works
 
 - Every filename lives in one big UTF-8 buffer, with the metadata (size, dates, flags) held in parallel arrays alongside it. That whole structure gets written to a binary cache so restarts are fast.
 - A derived trigram index maps filename and path-component substrings to delta/varint-encoded record-ID postings in one byte arena. Searches start from the rarest posting and verify only those candidate paths; short and wildcard queries retain the parallel full-scan fallback. The measured 76-million-entry derived index occupies about 100 MB at steady state.
+- Boolean queries compile to an expression tree. `AND` starts with the cheapest
+  indexed or directory candidate set and refines it; `OR` unions sorted IDs and
+  `XOR` computes their symmetric difference.
 - Newer keystroke queries cancel obsolete searches already executing in the indexer, so stale work cannot queue ahead of what is currently in the field.
 - An FSEvents watcher folds new, renamed, deleted, and modified files back into the index.
 

@@ -11,6 +11,26 @@ public struct Query: Sendable {
         case regularExpression(String)
     }
 
+    public indirect enum FilterExpression: Equatable, Sendable {
+        case predicate(Predicate)
+        case and([FilterExpression])
+        case or([FilterExpression])
+        case xor(FilterExpression, FilterExpression)
+        case not(FilterExpression)
+    }
+
+    public enum Predicate: Equatable, Sendable {
+        case all
+        case text(String)
+        case path(String)
+        case directory(String)
+        case fileTypes([String])
+        case regularExpression(String)
+        case kind(FileKind)
+        case size(SizeConstraint)
+        case modified(ModifiedConstraint)
+    }
+
     public enum FileKind: Equatable, Sendable { case file, folder }
 
     public enum SizeConstraint: Equatable, Sendable {
@@ -46,6 +66,7 @@ public struct Query: Sendable {
     }
 
     public struct Plan: Equatable, Sendable {
+        public var filterExpression: FilterExpression?
         public var termGroups: [[String]] = [[]]
         public var excludedTerms: [String] = []
         public var fileTypes: [String] = []
@@ -100,6 +121,9 @@ public struct Query: Sendable {
 
     public var isUnconstrained: Bool {
         let parsed = plan
+        if let expression = parsed.filterExpression {
+            return parsed.isValid && expression == .predicate(.all)
+        }
         return parsed.isValid && !parsed.hasAlternativeMatchers && !parsed.hasFilters
     }
 
@@ -125,6 +149,9 @@ public struct Query: Sendable {
     }
 
     private static func parse(_ text: String, regularExpressionMode: Bool) -> Plan {
+        if StructuredQueryParser.shouldParse(text) {
+            return StructuredQueryParser.parse(text)
+        }
         if regularExpressionMode, !containsKnownCommand(in: text) {
             var plan = Plan()
             plan.regularExpression = text
