@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.6.2
+
+- Immediately cancel an in-flight service search when the query changes, so a
+  full-scan regex cannot hold up the indexed query that replaces it.
+
 ## 0.6.1
 
 - Show clickable command suggestions when the search field starts with `/`, with

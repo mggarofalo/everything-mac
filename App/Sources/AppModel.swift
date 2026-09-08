@@ -118,11 +118,15 @@ final class AppModel: ObservableObject {
     func queryChanged() {
         savePrefs()   // also captures a Match-path toggle (shares this entry point)
         task?.cancel()
-        if Query(text: query).isSlashCommandPrefix {
+        let isSlashCommandPrefix = Query(text: query).isSlashCommandPrefix
+        if isSlashCommandPrefix {
             results = []
-            return
         }
         task = Task {
+            // Cancelling this Swift task cannot retract an XPC request that was
+            // already delivered. Invalidate it before issuing its replacement.
+            await index.cancelPendingSearch()
+            if Task.isCancelled || isSlashCommandPrefix { return }
             try? await Task.sleep(nanoseconds: 40_000_000) // debounce 40ms
             if Task.isCancelled { return }
             await runSearch()
@@ -131,7 +135,15 @@ final class AppModel: ObservableObject {
 
     // A live search option (case / whole-word / result limit) changed: persist it and
     // re-run immediately (no debounce — these come from a deliberate click, not typing).
-    func searchOptionsChanged() { savePrefs(); Task { await runSearch() } }
+    func searchOptionsChanged() {
+        savePrefs()
+        task?.cancel()
+        task = Task {
+            await index.cancelPendingSearch()
+            if Task.isCancelled { return }
+            await runSearch()
+        }
+    }
 
     // Persisted sort change from a column header or the View menu.
     func setSort(_ key: QueryEngine.SortKey, ascending asc: Bool) {

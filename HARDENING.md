@@ -76,7 +76,9 @@ Full Disk Access to a locally signed application.
   slash commands around that derived index, producing observed delays of 6–30
   seconds despite the fast core benchmark. After fixing the routing, installed-app
   smoke tests for `/filetype md`, `/regex handoff\.md$`, and `handoff` all rendered
-  updated results within the first 250 ms observation window.
+  updated results within the first 250 ms observation window. A subsequent
+  cancellation stress test started broad unindexed regexes, replaced them with
+  `/filetype md`, and observed the filetype results at the first 300 ms check.
 
 ## Installation experience
 

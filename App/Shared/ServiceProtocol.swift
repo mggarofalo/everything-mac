@@ -12,6 +12,7 @@ let indexChangedNotification = Notification.Name("com.everythingmac.index-change
 enum ServiceOperation: String, Codable, Sendable {
     case status
     case search
+    case cancelSearch
     case rebuild
     case getRules
     case setRules

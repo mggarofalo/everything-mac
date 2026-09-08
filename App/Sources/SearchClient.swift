@@ -49,6 +49,11 @@ actor SearchClient {
         return (try? await call(.search, payload: request, as: SearchResponse.self).records) ?? []
     }
 
+    // Cancel the request currently consuming the indexer's search actor.
+    func cancelPendingSearch() async {
+        _ = try? await call(.cancelSearch, payload: Optional<Bool>.none, as: Bool.self)
+    }
+
     func rescanAll(accessGeneration: UInt64? = nil) async {
         _ = accessGeneration
         _ = try? await call(.rebuild, payload: Optional<Bool>.none, as: Bool.self)

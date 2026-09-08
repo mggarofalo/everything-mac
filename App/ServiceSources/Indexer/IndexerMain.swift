@@ -76,6 +76,13 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
             reply((try? JSONEncoder().encode(failure)) ?? Data())
             return
         }
+        // Cancellation must not wait for the index actor: that actor may be
+        // occupied by the CPU-bound regex scan that needs interrupting.
+        if request.operation == .cancelSearch {
+            _ = latestSearch.begin()
+            reply((try? JSONEncoder().encode(ServiceReply.success(true))) ?? Data())
+            return
+        }
         // Advance this before awaiting the actor. A newer XPC request can then
         // cancel a CPU-bound older search even while the actor is occupied by it.
         let searchGeneration = request.operation == .search ? latestSearch.begin() : nil
@@ -109,6 +116,9 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
                                                  !latestSearch.isCurrent(searchGeneration)
                                              })
             return .success(SearchResponse(records: records))
+        case .cancelSearch:
+            // Handled synchronously by perform(), before creating this task.
+            return .success(true)
         case .rebuild:
             await index.rescanAll(accessGeneration: generation)
             await index.flush(accessGeneration: generation)
