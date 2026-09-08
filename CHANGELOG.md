@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.1
+
+- Show clickable command suggestions when the search field starts with `/`, with
+  Tab completion once the typed prefix identifies one command.
+- Fix slash commands bypassing the component index in the background service,
+  which made installed filetype and regex searches far slower than core benchmarks.
+
 ## 0.6.0
 
 - Add /filetype md and multi-extension searches such as /filetype doc docx.

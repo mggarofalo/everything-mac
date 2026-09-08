@@ -84,7 +84,7 @@ actor IndexActor {
                               caseInsensitive: caseInsensitive, wholeWord: wholeWord,
                               usesRegularExpression: usesRegularExpression)
             let matches: [UInt32]
-            if query.terms.isEmpty {
+            if query.isUnconstrained {
                 matches = engine.search(query, in: store, isCancelled: isCancelled)
             } else {
                 guard await prepareComponentIndex(isCancelled: isCancelled) else { return [] }

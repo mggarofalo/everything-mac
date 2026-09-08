@@ -53,6 +53,22 @@ final class IndexCoreTests: XCTestCase {
                                      in: store, componentIndex: index), [])
     }
 
+    func testSlashCommandsAreNotMistakenForUnconstrainedQueries() {
+        XCTAssertTrue(Query(text: "").isUnconstrained)
+        XCTAssertTrue(Query(text: "   ").isUnconstrained)
+        XCTAssertFalse(Query(text: "handoff").isUnconstrained)
+        XCTAssertFalse(Query(text: "/filetype md").isUnconstrained)
+        XCTAssertFalse(Query(text: #"/regex handoff\.md$"#).isUnconstrained)
+        XCTAssertTrue(Query(text: "/").isSlashCommandPrefix)
+        XCTAssertTrue(Query(text: "/file").isSlashCommandPrefix)
+        XCTAssertTrue(Query(text: "/REGEX").isSlashCommandPrefix)
+        XCTAssertFalse(Query(text: "/regex ").isSlashCommandPrefix)
+        XCTAssertFalse(Query(text: "/unknown").isSlashCommandPrefix)
+        XCTAssertNil(Query(text: "/").slashCommandCompletion)
+        XCTAssertEqual(Query(text: "/f").slashCommandCompletion, "/filetype ")
+        XCTAssertEqual(Query(text: "/reg").slashCommandCompletion, "/regex ")
+    }
+
     func testPlainMatchPathTermsPropagateThroughAncestors() {
         var store = FileStore()
         let root = store.append(name: "/", parent: FileStore.noParent, size: 0,

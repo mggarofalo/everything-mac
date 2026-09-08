@@ -1,6 +1,8 @@
 import Foundation
 
 public struct Query: Sendable {
+    public static let slashCommands = ["/filetype", "/regex"]
+
     public enum Expression: Equatable, Sendable {
         case terms([String])
         case fileTypes([String])
@@ -44,6 +46,36 @@ public struct Query: Sendable {
     public var terms: [String] {
         guard case .terms(let terms) = expression else { return [] }
         return terms
+    }
+
+    /// Only an ordinary query with no terms is truly unconstrained. Slash
+    /// commands may expose no `terms`, but still need the component index for
+    /// their optimized implementations.
+    public var isUnconstrained: Bool {
+        guard case .terms(let terms) = expression else { return false }
+        return terms.isEmpty
+    }
+
+    /// True while the user is typing the name of a known slash command, before
+    /// its separating space. The app uses this to show
+    /// completions without launching a search for `/`, `/f`, and similar input.
+    public var isSlashCommandPrefix: Bool {
+        !matchingSlashCommands.isEmpty
+    }
+
+    public var matchingSlashCommands: [String] {
+        guard text.hasPrefix("/"), !text.contains(where: { $0.isWhitespace }) else { return [] }
+        let prefix = text.lowercased()
+        return Self.slashCommands.filter { $0.hasPrefix(prefix) }
+    }
+
+    /// A trailing space makes the completed command immediately ready for its
+    /// argument. Ambiguous prefixes intentionally have no completion.
+    public var slashCommandCompletion: String? {
+        guard matchingSlashCommands.count == 1, let command = matchingSlashCommands.first else {
+            return nil
+        }
+        return command + " "
     }
 
     private static func commandRemainder(_ command: String, in text: String) -> String? {

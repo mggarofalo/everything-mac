@@ -39,9 +39,9 @@ Full Disk Access to a locally signed application.
 
 ## Verification
 
-- `swift test`: eleven tests pass, including live FSEvents delivery, indexed Match
+- `swift test`: twelve tests pass, including live FSEvents delivery, indexed Match
   Path semantics, incremental additions/deletions, slash-command parsing, filetype
-  and regex semantics, and search cancellation.
+  and regex semantics, command-query index routing, and search cancellation.
 - Xcode Release build: succeeds with Swift 6.
 - Installed bundle: `codesign --verify --deep --strict` succeeds.
 - Signature: Team ID `649367BDD4`, hardened-runtime flag present, no
@@ -72,7 +72,11 @@ Full Disk Access to a locally signed application.
   `handoff\.md$` and `.*handoff\.md$` returned 43 records in 0.2–1.8 ms. A broad
   filename regex with no mandatory literal took 0.9 seconds; the corresponding
   worst-case full-path scan took 8.0 seconds. Those fallbacks run in parallel and
-  remain cancellable by newer input.
+  remain cancellable by newer input. The initial 0.6.0 service accidentally routed
+  slash commands around that derived index, producing observed delays of 6–30
+  seconds despite the fast core benchmark. After fixing the routing, installed-app
+  smoke tests for `/filetype md`, `/regex handoff\.md$`, and `handoff` all rendered
+  updated results within the first 250 ms observation window.
 
 ## Installation experience
 

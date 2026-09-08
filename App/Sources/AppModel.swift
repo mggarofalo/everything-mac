@@ -118,6 +118,10 @@ final class AppModel: ObservableObject {
     func queryChanged() {
         savePrefs()   // also captures a Match-path toggle (shares this entry point)
         task?.cancel()
+        if Query(text: query).isSlashCommandPrefix {
+            results = []
+            return
+        }
         task = Task {
             try? await Task.sleep(nanoseconds: 40_000_000) // debounce 40ms
             if Task.isCancelled { return }

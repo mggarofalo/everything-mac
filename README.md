@@ -80,6 +80,9 @@ Two slash commands are also available:
 - `/regex handoff\.md$` uses a regular expression. This example finds names ending
   in `handoff.md`; `\.` means a literal dot and `$` means the end of the name.
 
+Type `/` to see the available commands, then click one to insert it. Once the
+prefix identifies one command, press Tab to complete it (`/f` → `/filetype `).
+
 `/regex` consumes everything after the command as the expression. The Regex menu
 option treats the entire field as an expression without requiring the command.
 Regex normally examines the filename; enable Match Path to examine the full path.
