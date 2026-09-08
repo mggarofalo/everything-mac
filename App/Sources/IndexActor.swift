@@ -603,9 +603,7 @@ actor IndexActor {
         componentIndexBuild?.cancel()
         componentIndexBuild = Task.detached(priority: .utility) {
             var index = ComponentSearchIndex()
-            if index.synchronize(with: snapshot, isCancelled: { Task.isCancelled }) {
-                index.compactStorage()
-            }
+            _ = index.rebuild(with: snapshot, isCancelled: { Task.isCancelled })
             return (generation, index)
         }
     }

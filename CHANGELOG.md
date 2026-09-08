@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.2
+
+- Delta-encode trigram posting IDs into a single byte arena, reducing the measured
+  steady-state index cost from roughly 330 MB to 100 MB without regressing search latency.
+- Build compressed postings with exact two-pass sizing so temporary Swift arrays do
+  not erase the resident-memory savings.
+- Preserve case-sensitive filename semantics when the component index supplies candidates.
+
 ## 0.5.1
 
 - Add a compact component trigram index that narrows substring and Match Path searches before reconstructing paths.

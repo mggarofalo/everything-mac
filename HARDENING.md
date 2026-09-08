@@ -58,10 +58,15 @@ Full Disk Access to a locally signed application.
   `desktop marvel present` in 89 ms (one result) and `HARDENING.md` in 0.4 ms.
   Realistic character-by-character entry fell from 9.4 seconds after the last
   keystroke to about 0.4 seconds, including accessibility-tool overhead.
-- Derived-index cost: the standalone optimized build took 3.5 seconds; the live
-  background service completed in about 8 seconds while the machine was active.
-  The indexer settled around 610 MB resident versus about 280 MB without substring
-  postings, with an approximately 860 MB construction peak.
+- Derived-index cost: 76.3 million posting IDs occupy 96.0 MB after delta/varint
+  encoding rather than 305 MB as raw `UInt32` values. The optimized two-pass build
+  took 3.6 seconds versus 3.3 seconds before compression. A standalone steady-state
+  measurement was 177 MB total versus a 77 MB store-only baseline, making the
+  derived index's measured cost about 100 MB rather than roughly 330 MB. Peak RSS
+  fell from 836 MB to 681 MB; peak physical footprint fell from 812 MB to 502 MB.
+  The installed indexer measured 174 MB RSS immediately after rebuilding and 218 MB
+  after the live search smoke test, down from the prior implementation's roughly
+  610 MB initial steady-state measurement.
 
 ## Installation experience
 

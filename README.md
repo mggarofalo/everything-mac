@@ -72,7 +72,7 @@ Launch it and start typing. Matches show up right away. Click a column header to
 ## How it works
 
 - Every filename lives in one big UTF-8 buffer, with the metadata (size, dates, flags) held in parallel arrays alongside it. That whole structure gets written to a binary cache so restarts are fast.
-- A derived trigram index maps filename and path-component substrings to compact record-ID postings. Searches start from the rarest posting and verify only those candidate paths; short and wildcard queries retain the parallel full-scan fallback.
+- A derived trigram index maps filename and path-component substrings to delta/varint-encoded record-ID postings in one byte arena. Searches start from the rarest posting and verify only those candidate paths; short and wildcard queries retain the parallel full-scan fallback. The measured 76-million-entry derived index occupies about 100 MB at steady state.
 - Newer keystroke queries cancel obsolete searches already executing in the indexer, so stale work cannot queue ahead of what is currently in the field.
 - An FSEvents watcher folds new, renamed, deleted, and modified files back into the index.
 

@@ -38,7 +38,7 @@ final class IndexCoreTests: XCTestCase {
         let unrelated = store.append(name: "presentation-notes.md", parent: root,
                                      size: 1, mtime: 0, isDir: false, volID: 1)
         var index = ComponentSearchIndex()
-        XCTAssertTrue(index.synchronize(with: store))
+        XCTAssertTrue(index.rebuild(with: store))
         let engine = QueryEngine()
 
         XCTAssertEqual(engine.search(Query(text: "desktop marvel present", matchPath: true),
@@ -51,6 +51,13 @@ final class IndexCoreTests: XCTestCase {
                                      in: store, componentIndex: index), [document])
         XCTAssertEqual(engine.search(Query(text: "presentation", matchPath: false),
                                      in: store, componentIndex: index), [document, unrelated])
+        XCTAssertEqual(engine.search(Query(text: "desktop", matchPath: false,
+                                           caseInsensitive: false),
+                                     in: store, componentIndex: index), [])
+        XCTAssertEqual(engine.search(Query(text: "marvel", matchPath: false,
+                                           caseInsensitive: false),
+                                     in: store, componentIndex: index), [document])
+        XCTAssertLessThan(index.compressedByteCount, index.postingIDCount * MemoryLayout<UInt32>.size)
     }
 
     func testComponentIndexSynchronizesAppendsAndIgnoresDeletes() {
@@ -60,7 +67,7 @@ final class IndexCoreTests: XCTestCase {
         let old = store.append(name: "old-marvel.txt", parent: root, size: 1,
                                mtime: 0, isDir: false, volID: 1)
         var index = ComponentSearchIndex()
-        XCTAssertTrue(index.synchronize(with: store))
+        XCTAssertTrue(index.rebuild(with: store))
         let added = store.append(name: "new-marvel.txt", parent: root, size: 1,
                                  mtime: 0, isDir: false, volID: 1)
         store.markDeleted(old)
@@ -80,7 +87,7 @@ final class IndexCoreTests: XCTestCase {
                              mtime: 0, isDir: false, volID: 1)
         }
         var componentIndex = ComponentSearchIndex()
-        XCTAssertTrue(componentIndex.synchronize(with: store))
+        XCTAssertTrue(componentIndex.rebuild(with: store))
 
         let result = QueryEngine().search(Query(text: "common"), in: store,
                                           componentIndex: componentIndex,

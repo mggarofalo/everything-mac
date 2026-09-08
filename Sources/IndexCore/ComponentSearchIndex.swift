@@ -7,10 +7,104 @@ import Foundation
 /// path searches use the rarest component posting as a candidate generator, then
 /// verify those candidates and their descendants against reconstructed paths.
 public struct ComponentSearchIndex: Sendable {
-    private var postings: [UInt32: [UInt32]] = [:]
+    private struct Posting: Sendable {
+        let byteOffset: Int
+        let byteCount: Int
+        let idCount: Int
+        let lastID: UInt32
+    }
+
+    private struct PendingPosting: Sendable {
+        var bytes: [UInt8] = []
+        var idCount = 0
+        var lastID: UInt32
+
+        mutating func append(_ id: UInt32) {
+            ComponentSearchIndex.encode(id &- lastID, into: &bytes)
+            lastID = id
+            idCount += 1
+        }
+    }
+
+    // The stable baseline is delta/varint encoded because every posting is a
+    // monotonically increasing sequence of record IDs. Newly appended filesystem
+    // records stay in a small mutable tail until the next whole-index rebuild.
+    private var directory: [UInt32: Posting] = [:]
+    private var compressedIDs: [UInt8] = []
+    private var pendingPostings: [UInt32: PendingPosting] = [:]
     public private(set) var indexedRecordCount = 0
+    public private(set) var postingIDCount = 0
+    public var compressedByteCount: Int { compressedIDs.count }
 
     public init() {}
+
+    /// Build a compact whole-store baseline without first materializing UInt32
+    /// posting arrays. The first pass measures exact varint sizes; the second fills
+    /// one allocation. Dense temporary counters are indexed by a packed 21-bit
+    /// ASCII trigram and disappear before this value is returned.
+    @discardableResult
+    public mutating func rebuild(
+        with store: FileStore,
+        isCancelled: @Sendable () -> Bool = { false }
+    ) -> Bool {
+        let keySpace = 1 << 21
+        var bytePositions = [UInt32](repeating: 0, count: keySpace)
+        var counts = [UInt32](repeating: 0, count: keySpace)
+        var previousIDs = [UInt32](repeating: 0, count: keySpace)
+        var usedKeys: [UInt32] = []
+        usedKeys.reserveCapacity(64_000)
+        var totalPostings = 0
+
+        for recordIndex in 0..<store.count {
+            if recordIndex & 0xFFF == 0, isCancelled() { return false }
+            let id = UInt32(recordIndex)
+            for key in Self.uniqueTrigrams(in: store.nameBytesSlice(of: id)) {
+                let index = Int(key)
+                if counts[index] == 0 { usedKeys.append(key) }
+                let delta = id &- previousIDs[index]
+                bytePositions[index] &+= UInt32(Self.encodedLength(delta))
+                counts[index] &+= 1
+                previousIDs[index] = id
+                totalPostings += 1
+            }
+        }
+
+        var compactDirectory: [UInt32: Posting] = [:]
+        compactDirectory.reserveCapacity(usedKeys.count)
+        var totalBytes = 0
+        for key in usedKeys {
+            let index = Int(key)
+            let byteCount = Int(bytePositions[index])
+            compactDirectory[key] = Posting(byteOffset: totalBytes,
+                                            byteCount: byteCount,
+                                            idCount: Int(counts[index]),
+                                            lastID: previousIDs[index])
+            bytePositions[index] = UInt32(totalBytes)
+            previousIDs[index] = 0
+            totalBytes += byteCount
+        }
+
+        var bytes = [UInt8](repeating: 0, count: totalBytes)
+        for recordIndex in 0..<store.count {
+            if recordIndex & 0xFFF == 0, isCancelled() { return false }
+            let id = UInt32(recordIndex)
+            for key in Self.uniqueTrigrams(in: store.nameBytesSlice(of: id)) {
+                let index = Int(key)
+                let delta = id &- previousIDs[index]
+                var position = Int(bytePositions[index])
+                Self.encode(delta, into: &bytes, at: &position)
+                bytePositions[index] = UInt32(position)
+                previousIDs[index] = id
+            }
+        }
+
+        directory = compactDirectory
+        compressedIDs = bytes
+        pendingPostings = [:]
+        indexedRecordCount = store.count
+        postingIDCount = totalPostings
+        return true
+    }
 
     /// Add records appended since the last synchronization. Tombstones remain in
     /// postings and are rejected during lookup; this makes live deletes O(1).
@@ -28,20 +122,74 @@ public struct ComponentSearchIndex: Sendable {
             if indexedRecordCount & 0xFFF == 0, isCancelled() { return false }
             let id = UInt32(indexedRecordCount)
             let keys = Self.uniqueTrigrams(in: store.nameBytesSlice(of: id))
-            for key in keys { postings[key, default: []].append(id) }
+            for key in keys {
+                let previous = directory[key]?.lastID ?? 0
+                pendingPostings[key, default: PendingPosting(lastID: previous)].append(id)
+            }
+            postingIDCount += keys.count
             indexedRecordCount += 1
         }
         return true
     }
 
-    /// Drop geometric growth slack after a whole-store build. Incremental live
-    /// additions can grow individual lists again, but the persistent baseline
-    /// should reflect posting counts rather than Array capacity headroom.
+    /// Freeze the mutable postings into one compact byte arena. IDs are stored as
+    /// unsigned deltas using base-128 varints; common postings have small gaps and
+    /// therefore usually consume one or two bytes per ID instead of four plus the
+    /// overhead of thousands of independently allocated Swift Arrays.
     public mutating func compactStorage() {
-        for key in Array(postings.keys) {
-            guard let values = postings[key] else { continue }
-            postings[key] = values.withUnsafeBufferPointer { Array($0) }
+        guard !pendingPostings.isEmpty else { return }
+
+        // Whole-store construction has no compressed baseline. Remove each source
+        // list as it is encoded so its allocation can be released while the byte
+        // arena grows, keeping peak memory substantially below a two-copy rebuild.
+        if directory.isEmpty {
+            var bytes: [UInt8] = []
+            var compactDirectory: [UInt32: Posting] = [:]
+            compactDirectory.reserveCapacity(pendingPostings.count)
+            for key in Array(pendingPostings.keys) {
+                guard let pending = pendingPostings.removeValue(forKey: key) else { continue }
+                let offset = bytes.count
+                bytes.append(contentsOf: pending.bytes)
+                compactDirectory[key] = Posting(byteOffset: offset,
+                                                byteCount: bytes.count - offset,
+                                                idCount: pending.idCount,
+                                                lastID: pending.lastID)
+            }
+            pendingPostings = [:]
+            compressedIDs = bytes
+            directory = compactDirectory
+            return
         }
+
+        // This path is only needed if a caller explicitly recompacts an incremental
+        // tail. Concatenate the already-compatible encoded streams in posting order.
+        let keys = Set(directory.keys).union(pendingPostings.keys)
+        var bytes: [UInt8] = []
+        var compactDirectory: [UInt32: Posting] = [:]
+        compactDirectory.reserveCapacity(keys.count)
+        for key in keys {
+            let offset = bytes.count
+            var count = 0
+            var lastID: UInt32 = 0
+            if let posting = directory[key] {
+                let end = posting.byteOffset + posting.byteCount
+                bytes.append(contentsOf: compressedIDs[posting.byteOffset..<end])
+                count += posting.idCount
+                lastID = posting.lastID
+            }
+            if let pending = pendingPostings[key] {
+                bytes.append(contentsOf: pending.bytes)
+                count += pending.idCount
+                lastID = pending.lastID
+            }
+            compactDirectory[key] = Posting(byteOffset: offset,
+                                            byteCount: bytes.count - offset,
+                                            idCount: count,
+                                            lastID: lastID)
+        }
+        compressedIDs = bytes
+        directory = compactDirectory
+        pendingPostings = [:]
     }
 
     /// Returns nil when the query cannot use this index and should take the exact
@@ -60,7 +208,7 @@ public struct ComponentSearchIndex: Sendable {
             ? query.terms.map { $0.replacingOccurrences(of: "\\", with: "/") }
             : query.terms
 
-        var seed: (term: [UInt8], ids: [UInt32])?
+        var seed: (term: [UInt8], key: UInt32, count: Int)?
         for term in terms {
             let fragments = query.matchPath
                 ? term.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
@@ -68,23 +216,32 @@ public struct ComponentSearchIndex: Sendable {
             for fragment in fragments {
                 guard let bytes = Glob.asciiLowerBytes(fragment), bytes.count >= 3 else { continue }
                 for key in Self.trigrams(in: bytes) {
-                    guard let ids = postings[key] else { return [] }
-                    if seed == nil || ids.count < seed!.ids.count { seed = (bytes, ids) }
+                    let count = postingCount(for: key)
+                    guard count > 0 else { return [] }
+                    if seed == nil || count < seed!.count { seed = (bytes, key, count) }
                 }
             }
         }
         guard let seed else { return nil }
+        let seedIDs = decodedPosting(for: seed.key)
 
         if !query.matchPath {
-            let matchers = terms.compactMap(Glob.asciiLowerBytes)
-            guard matchers.count == terms.count else { return nil }
             var result: [UInt32] = []
-            result.reserveCapacity(min(seed.ids.count, 16_384))
-            for (offset, id) in seed.ids.enumerated() {
+            result.reserveCapacity(min(seed.count, 16_384))
+            let matchers = query.caseInsensitive ? terms.compactMap(Glob.asciiLowerBytes) : []
+            if query.caseInsensitive, matchers.count != terms.count { return nil }
+            for (offset, id) in seedIDs.enumerated() {
                 if offset & 0xFFF == 0, isCancelled() { return [] }
                 guard store.isLive(id) else { continue }
-                let name = store.nameBytesSlice(of: id)
-                if matchers.allSatisfy({ Glob.matchesASCII(patternLowerBytes: $0, in: name) }) {
+                let matches = query.caseInsensitive
+                    ? matchers.allSatisfy {
+                        Glob.matchesASCII(patternLowerBytes: $0,
+                                          in: store.nameBytesSlice(of: id))
+                    }
+                    : terms.allSatisfy {
+                        Glob.matches(pattern: $0, in: store.name(of: id), caseInsensitive: false)
+                    }
+                if matches {
                     result.append(id)
                 }
             }
@@ -93,7 +250,7 @@ public struct ComponentSearchIndex: Sendable {
 
         var visited = Set<UInt32>()
         var result: [UInt32] = []
-        for (offset, componentID) in seed.ids.enumerated() {
+        for (offset, componentID) in seedIDs.enumerated() {
             if offset & 0x3FF == 0, isCancelled() { return [] }
             guard store.isLive(componentID),
                   Glob.matchesASCII(patternLowerBytes: seed.term,
@@ -112,6 +269,75 @@ public struct ComponentSearchIndex: Sendable {
         }
         result.sort()
         return result
+    }
+
+    private func postingCount(for key: UInt32) -> Int {
+        (directory[key]?.idCount ?? 0) + (pendingPostings[key]?.idCount ?? 0)
+    }
+
+    private func decodedPosting(for key: UInt32) -> [UInt32] {
+        var ids: [UInt32] = []
+        ids.reserveCapacity(postingCount(for: key))
+        decode(key) { ids.append($0) }
+        if let pending = pendingPostings[key] {
+            decode(pending.bytes[...], after: directory[key]?.lastID ?? 0) { ids.append($0) }
+        }
+        return ids
+    }
+
+    private func decode(_ key: UInt32, body: (UInt32) -> Void) {
+        guard let posting = directory[key] else { return }
+        let end = posting.byteOffset + posting.byteCount
+        decode(compressedIDs[posting.byteOffset..<end], after: 0, body: body)
+    }
+
+    private func decode(_ bytes: ArraySlice<UInt8>, after initial: UInt32,
+                        body: (UInt32) -> Void) {
+        var offset = bytes.startIndex
+        var previous = initial
+        while offset < bytes.endIndex {
+            var delta: UInt32 = 0
+            var shift: UInt32 = 0
+            while true {
+                let byte = bytes[offset]
+                offset += 1
+                delta |= UInt32(byte & 0x7F) << shift
+                if byte & 0x80 == 0 { break }
+                shift += 7
+            }
+            previous &+= delta
+            body(previous)
+        }
+    }
+
+    private static func encode(_ value: UInt32, into bytes: inout [UInt8]) {
+        var remainder = value
+        repeat {
+            var byte = UInt8(remainder & 0x7F)
+            remainder >>= 7
+            if remainder != 0 { byte |= 0x80 }
+            bytes.append(byte)
+        } while remainder != 0
+    }
+
+    private static func encodedLength(_ value: UInt32) -> Int {
+        if value < 1 << 7 { return 1 }
+        if value < 1 << 14 { return 2 }
+        if value < 1 << 21 { return 3 }
+        if value < 1 << 28 { return 4 }
+        return 5
+    }
+
+    private static func encode(_ value: UInt32, into bytes: inout [UInt8],
+                               at position: inout Int) {
+        var remainder = value
+        repeat {
+            var byte = UInt8(remainder & 0x7F)
+            remainder >>= 7
+            if remainder != 0 { byte |= 0x80 }
+            bytes[position] = byte
+            position += 1
+        } while remainder != 0
     }
 
     private static func pathMatches(_ terms: [String], caseInsensitive: Bool,
@@ -147,7 +373,7 @@ public struct ComponentSearchIndex: Sendable {
         for index in 0...(bytes.count - 3) {
             let a = bytes[index], b = bytes[index + 1], c = bytes[index + 2]
             guard a < 0x80, b < 0x80, c < 0x80 else { continue }
-            keys.append(UInt32(a) << 16 | UInt32(b) << 8 | UInt32(c))
+            keys.append(UInt32(a) << 14 | UInt32(b) << 7 | UInt32(c))
         }
         return keys
     }
