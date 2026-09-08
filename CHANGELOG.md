@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.0
+
+- Keep the index complete by checkpointing only fully processed FSEvents and replaying changes made during rebuilds.
+- Perform a full rebuild when FSEvents reports lost information at a volume root.
+- Track mounted volumes dynamically and avoid crawling newly mounted network shares.
+- Refresh file size, modification time, and file-versus-directory replacements from file-level events.
+- Preserve selections by path and confirm every Move to Trash action.
+- Wait for Full Disk Access before building or accepting the new cache format.
+- Compact deleted records and protect the filename cache with owner-only permissions.
+- Remove contributor-specific signing settings, enable hardened runtime, and exclude debug entitlements.
+- Publish and run the IndexCore test suite.
+
 All notable changes to EverythingMac are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (`MAJOR.MINOR.PATCH`).

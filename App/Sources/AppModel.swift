@@ -19,15 +19,22 @@ final class AppModel: ObservableObject {
     @Published var resultLimit = 5000
     @Published var rules: ExcludeRules = .defaults
     @Published var scanning = false
-    @Published var selectedID: UInt32?
+    @Published private(set) var hasFullDiskAccess = false
+    @Published var selectedPath: String?
+    private(set) var selectedIdentity: ResultActions.ItemIdentity?
     // Bumped to ask the focused window to put the cursor in the search field (⌘F /
     // File ▸ Find). A counter, not a Bool, so repeated requests always fire onChange.
     @Published var focusSearchSignal = 0
 
-    // The currently-selected result, resolved by stable store id against the live
+    // The currently-selected result, resolved by stable path against the live
     // result set. nil once the file drops out of results, which auto-disables the
     // selection-dependent menu items.
-    var selected: FileRecord? { selectedID.flatMap { id in results.first { $0.id == id } } }
+    var selected: FileRecord? { selectedPath.flatMap { path in results.first { $0.path == path } } }
+
+    func select(_ record: FileRecord?) {
+        selectedIdentity = record.flatMap { ResultActions.identity(for: $0) }
+        selectedPath = record?.path
+    }
 
     let index = IndexActor()
     private var task: Task<Void, Never>?
@@ -35,18 +42,52 @@ final class AppModel: ObservableObject {
     private var flushTimer: Task<Void, Never>?
     private var cloudSweepTimer: Task<Void, Never>?
     private var searchSeq = 0
+    private var didBootstrap = false
+    private var bootstrapTask: Task<Void, Never>?
+    private var maintenanceTask: Task<Void, Never>?
+    private var accessGeneration: UInt64 = 0
 
-    func bootstrap() {
+    func updateFullDiskAccess(_ granted: Bool) {
+        guard granted != hasFullDiskAccess || (granted && !didBootstrap) else { return }
+        hasFullDiskAccess = granted
+        accessGeneration &+= 1
+        let generation = accessGeneration
+        if granted {
+            bootstrap(generation: generation)
+            return
+        }
+        guard didBootstrap else { return }
+        didBootstrap = false
+        bootstrapTask?.cancel()
+        maintenanceTask?.cancel()
+        task?.cancel()
+        liveTask?.cancel()
+        flushTimer?.cancel()
+        cloudSweepTimer?.cancel()
+        scanning = false
+        selectedPath = nil
+        selectedIdentity = nil
+        results = []
+        total = 0
+        Task { await index.invalidateForAccessRevocation(generation: generation) }
+    }
+
+    private func bootstrap(generation: UInt64) {
+        guard !didBootstrap, FullDiskAccess.isGranted() else { return }
+        didBootstrap = true
+        scanning = true
         loadPrefs()   // before the first runSearch so the initial query uses saved options
-        Task {
+        bootstrapTask = Task {
             await index.startUp(
                 onLiveChange: { [weak self] in
                     Task { @MainActor in self?.liveRefresh() }
                 },
                 onProgress: { [weak self] count in
                     Task { @MainActor in self?.onScanProgress(count) }
-                }
+                },
+                accessGeneration: generation
             )
+            guard !Task.isCancelled, hasFullDiskAccess else { return }
             scanning = false
             total = await index.totalCount
             rules = await index.currentRules()
@@ -71,6 +112,7 @@ final class AppModel: ObservableObject {
     // Driven by the off-actor scan: flips into "indexing" mode and streams the
     // running count to the status bar as the new index builds.
     func onScanProgress(_ count: Int) {
+        guard hasFullDiskAccess, didBootstrap else { return }
         scanning = true
         total = count
         // No live search here: during the initial build the actor serves the OLD
@@ -183,11 +225,18 @@ final class AppModel: ObservableObject {
     // but without changing the exclude rules — for when the index drifts or the user
     // wants to be sure it's fresh. Persists the result so the next launch matches.
     func rebuildIndex() {
-        guard !scanning else { return }
-        Task {
-            scanning = true
-            await index.rescanAll()
-            await index.flush()
+        guard hasFullDiskAccess, !scanning else { return }
+        scanning = true
+        selectedPath = nil
+        selectedIdentity = nil
+        let generation = accessGeneration
+        maintenanceTask = Task {
+            await index.rescanAll(accessGeneration: generation)
+            guard !Task.isCancelled, hasFullDiskAccess,
+                  generation == accessGeneration else { return }
+            await index.flush(accessGeneration: generation)
+            guard !Task.isCancelled, hasFullDiskAccess,
+                  generation == accessGeneration else { return }
             scanning = false
             total = await index.totalCount
             await runSearch()
@@ -195,14 +244,24 @@ final class AppModel: ObservableObject {
     }
 
     func applyRules(_ newRules: ExcludeRules) {
-        Task {
-            await index.setRules(newRules)
+        guard hasFullDiskAccess, !scanning else { return }
+        scanning = true
+        selectedPath = nil
+        selectedIdentity = nil
+        let generation = accessGeneration
+        maintenanceTask = Task {
+            await index.setRules(newRules, accessGeneration: generation)
+            guard !Task.isCancelled, hasFullDiskAccess,
+                  generation == accessGeneration else { return }
             rules = newRules
-            scanning = true
-            await index.rescanAll()
+            await index.rescanAll(accessGeneration: generation)
+            guard !Task.isCancelled, hasFullDiskAccess,
+                  generation == accessGeneration else { return }
             // Persist the freshly-rebuilt index with the new rules' fingerprint, so the
             // next launch sees a matching cache instead of rescanning again.
-            await index.flush()
+            await index.flush(accessGeneration: generation)
+            guard !Task.isCancelled, hasFullDiskAccess,
+                  generation == accessGeneration else { return }
             scanning = false
             total = await index.totalCount
             await runSearch()

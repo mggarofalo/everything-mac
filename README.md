@@ -4,11 +4,9 @@ Type part of a filename and every file and folder that matches shows up instantl
 
 ![EverythingMac searching across 8.2 million files](assets/screenshot.png)
 
-**[Download the latest release](https://github.com/alesloa/everything-mac/releases/latest)** (macOS 14+), or [build it from source](#build-and-run).
+This fork currently supports local source builds on macOS 14 or newer.
 
 > The folder is called `everything-rust` for historical reasons. There's no Rust in it. The whole app is Swift (SwiftUI and AppKit).
->
-> This build isn't notarized by Apple, so on first open macOS will block it. Either run `xattr -dr com.apple.quarantine /Applications/EverythingMac.app`, or right-click the app and choose Open. See the [release notes](https://github.com/alesloa/everything-mac/releases/latest) for details.
 
 ## Why I built it
 
@@ -36,19 +34,20 @@ So I wrote my own. It reads every filename on the machine into memory and search
 ## Build and run
 
 ```bash
-git clone https://github.com/alesloa/everything-mac.git
+git clone https://github.com/mggarofalo/everything-mac.git
 cd everything-mac
 ./scripts/build-dev.sh
 ```
 
-The script generates the Xcode project from `App/project.yml`, builds a Release binary, and copies the app into `/Applications`. Build Release, not Debug. The search loop runs about 100x slower without optimization.
+The script generates the Xcode project, builds a hardened Release binary, verifies its signature and entitlements, and copies the app into `/Applications`. Build Release, not Debug. The search loop runs about 100 times slower without optimization.
 
 ### Signing it as yourself
 
-`App/project.yml` has my Apple Development identity hardcoded so Full Disk Access doesn't get revoked every time I rebuild on my own machine. To build it on yours, do one of these:
+The build script selects the first Apple Development identity in your login keychain. Set `LOCAL_SIGN_IDENTITY` when you want another identity:
 
-- Open `App/EverythingMac.xcodeproj` in Xcode, select the EverythingMac target, go to Signing & Capabilities, turn on "Automatically manage signing," and pick your team.
-- Or edit `CODE_SIGN_IDENTITY` and `DEVELOPMENT_TEAM` in `App/project.yml` to your own values and re-run `./scripts/build-dev.sh`.
+```bash
+LOCAL_SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./scripts/build-dev.sh
+```
 
 ### Full Disk Access
 
@@ -66,7 +65,15 @@ Launch it and start typing. Matches show up right away. Click a column header to
 
 - Every filename lives in one big UTF-8 buffer, with the metadata (size, dates, flags) held in parallel arrays alongside it. That whole structure gets written to a binary cache so restarts are fast.
 - A search runs as a parallel substring scan across all CPU cores, feeding a fixed-size max-heap that keeps only the top results. That's what keeps typing responsive even with millions of records.
-- An FSEvents watcher folds new, renamed, and deleted files back into the index so it never needs a full rescan.
+- An FSEvents watcher folds new, renamed, deleted, and modified files back into the index.
+
+The app checkpoints only events that it has processed. It replays changes made during scans and performs a complete rebuild when FSEvents reports lost history.
+
+## Tests
+
+```bash
+swift test
+```
 
 ## License
 

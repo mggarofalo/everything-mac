@@ -3,6 +3,7 @@ import IndexCore
 
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var fdaGranted = true
     @FocusState private var searchFocused: Bool
 
@@ -23,16 +24,24 @@ struct ContentView: View {
             Divider()
             ResultsTable(rows: model.results,
                          onSort: { k, a in model.setSort(k, ascending: a) },
-                         onSelect: { model.selectedID = $0?.id },
+                         onSelect: { model.select($0) },
                          onActivate: { ResultActions.open($0) })
             Divider()
             StatusBar(total: model.total, shown: model.results.count, scanning: model.scanning)
         }
         .background(.regularMaterial)
         .onAppear {
-            fdaGranted = FullDiskAccess.isGranted()
+            refreshAccess()
             searchFocused = true
         }
+        .onChange(of: scenePhase) {
+            if scenePhase == .active { refreshAccess() }
+        }
         .onChange(of: model.focusSearchSignal) { searchFocused = true }
+    }
+
+    private func refreshAccess() {
+        fdaGranted = FullDiskAccess.isGranted()
+        model.updateFullDiskAccess(fdaGranted)
     }
 }

@@ -1,6 +1,25 @@
 import Foundation
 
 public struct QueryEngine: Sendable {
+    private final class ChunkResults: @unchecked Sendable {
+        private let lock = NSLock()
+        private var values: [[UInt32]]
+
+        init(count: Int) { values = [[UInt32]](repeating: [], count: count) }
+
+        func set(_ value: [UInt32], at index: Int) {
+            lock.lock()
+            values[index] = value
+            lock.unlock()
+        }
+
+        func flattened() -> [UInt32] {
+            lock.lock()
+            defer { lock.unlock() }
+            return values.flatMap { $0 }
+        }
+    }
+
     public init() {}
 
     // Pre-classified term: ASCII bytes (fast path) or String fallback.
@@ -69,17 +88,16 @@ public struct QueryEngine: Sendable {
         // loop stays inlinable and ARC-free per id.
         let chunks = max(2, ProcessInfo.processInfo.activeProcessorCount)
         let span = (n + chunks - 1) / chunks
-        var parts = [[UInt32]](repeating: [], count: chunks)
-        parts.withUnsafeMutableBufferPointer { buf in
-            DispatchQueue.concurrentPerform(iterations: chunks) { c in
-                let lo = c * span
-                let hi = min(n, lo + span)
-                guard lo < hi else { return }
-                buf[c] = self.scanRange(UInt32(lo), UInt32(hi), matchers: matchers,
-                                        matchPath: matchPath, hasNonASCII: hasNonASCII, ci: ci, in: store)
-            }
+        let parts = ChunkResults(count: chunks)
+        DispatchQueue.concurrentPerform(iterations: chunks) { c in
+            let lo = c * span
+            let hi = min(n, lo + span)
+            guard lo < hi else { return }
+            let matches = self.scanRange(UInt32(lo), UInt32(hi), matchers: matchers,
+                                         matchPath: matchPath, hasNonASCII: hasNonASCII, ci: ci, in: store)
+            parts.set(matches, at: c)
         }
-        return parts.flatMap { $0 }
+        return parts.flattened()
     }
 
     // Scan ids in [lo, hi) and return those matching every term. The match logic is

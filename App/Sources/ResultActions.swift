@@ -2,7 +2,18 @@ import AppKit
 import IndexCore
 import UniformTypeIdentifiers
 
-enum ResultActions {
+@MainActor enum ResultActions {
+    struct ItemIdentity {
+        let path: String
+        let device: dev_t
+        let inode: ino_t
+    }
+
+    static func identity(for rec: FileRecord) -> ItemIdentity? {
+        var value = stat()
+        guard lstat(rec.path, &value) == 0 else { return nil }
+        return ItemIdentity(path: rec.path, device: value.st_dev, inode: value.st_ino)
+    }
     static func open(_ rec: FileRecord) { NSWorkspace.shared.open(URL(fileURLWithPath: rec.path)) }
     static func open(_ rec: FileRecord, with appURL: URL) {
         NSWorkspace.shared.open([URL(fileURLWithPath: rec.path)],
@@ -18,8 +29,38 @@ enum ResultActions {
     static func copyName(_ rec: FileRecord) {
         NSPasteboard.general.clearContents(); NSPasteboard.general.setString(rec.name, forType: .string)
     }
-    static func trash(_ rec: FileRecord) {
-        try? FileManager.default.trashItem(at: URL(fileURLWithPath: rec.path), resultingItemURL: nil)
+    static func trash(_ rec: FileRecord, expected: ItemIdentity?) {
+        guard let original = expected, original.path == rec.path else {
+            NSAlert(error: CocoaError(.fileNoSuchFile)).runModal()
+            return
+        }
+        let confirmation = NSAlert()
+        confirmation.messageText = "Move “\(rec.name)” to the Trash?"
+        confirmation.informativeText = rec.path
+        confirmation.alertStyle = .warning
+        confirmation.addButton(withTitle: "Move to Trash")
+        confirmation.buttons.first?.hasDestructiveAction = true
+        confirmation.addButton(withTitle: "Cancel")
+        guard confirmation.runModal() == .alertFirstButtonReturn else { return }
+
+        var current = stat()
+        guard lstat(rec.path, &current) == 0,
+              current.st_dev == original.device, current.st_ino == original.inode else {
+            let changed = NSAlert()
+            changed.messageText = "The item changed before it could be moved"
+            changed.informativeText = "Nothing was moved. Select the item again and retry."
+            changed.alertStyle = .warning
+            changed.runModal()
+            return
+        }
+
+        do {
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: rec.path), resultingItemURL: nil)
+        } catch {
+            let failure = NSAlert(error: error)
+            failure.messageText = "Couldn’t move “\(rec.name)” to the Trash"
+            failure.runModal()
+        }
     }
 
     // Write the current result list to a tab-separated file the user picks. TSV (not

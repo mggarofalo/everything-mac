@@ -42,12 +42,14 @@ struct AppCommands: Commands {
                 .disabled(model.results.isEmpty)
             Button(model.scanning ? "Rebuilding Index…" : "Rebuild Index") { model.rebuildIndex() }
                 .keyboardShortcut("r", modifiers: [.command, .option])
-                .disabled(model.scanning)
+                .disabled(model.scanning || !model.hasFullDiskAccess)
             Divider()
             // No keyboard shortcut on purpose: ⌘⌫ is "delete to start of line" while
             // the search field is focused, so binding it here would risk trashing a
             // file mid-type. Click-only keeps a destructive action deliberate.
-            Button("Move to Trash") { if let r = model.selected { ResultActions.trash(r) } }
+            Button("Move to Trash") {
+                if let r = model.selected { ResultActions.trash(r, expected: model.selectedIdentity) }
+            }
                 .disabled(model.selected == nil)
         }
 

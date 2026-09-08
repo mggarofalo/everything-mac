@@ -11,7 +11,6 @@ struct EverythingMacApp: App {
                 .frame(minWidth: 800, minHeight: 500)
                 .onAppear {
                     appDelegate.model = model
-                    model.bootstrap()
                 }
         }
         .commands { AppCommands(model: model) }

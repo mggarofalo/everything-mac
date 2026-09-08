@@ -23,11 +23,19 @@ actor IndexActor {
     // whenever the store mutates (rescan / live reconcile).
     private var cachedQueryKey: String?
     private var cachedIDs: [UInt32] = []
+    private var visibleResultPaths: Set<String> = []
+    private var lastSort: QueryEngine.SortKey = .name
 
     private var monitor: LiveMonitor?
+    private var eventContinuation: AsyncStream<[LiveMonitor.FSChange]>.Continuation?
+    private var eventConsumer: Task<Void, Never>?
+    private var monitorRetry: Task<Void, Never>?
     private var lastEventID: UInt64 = UInt64(kFSEventStreamEventIdSinceNow)
     private var onLiveChange: (@Sendable () -> Void)?
     private var onProgress: (@Sendable (Int) -> Void)?
+    private var isRescanning = false
+    private var accessEnabled = false
+    private var accessGeneration: UInt64 = 0
 
     init() {
         if let data = UserDefaults.standard.data(forKey: "excludeRules"),
@@ -36,13 +44,15 @@ actor IndexActor {
         }
     }
 
-    var totalCount: Int { store.count }
+    var totalCount: Int { store.liveCount }
 
     // ~/Library/Application Support/Everything-Mac/index.idx
     static func cacheURL() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Everything-Mac", isDirectory: true)
         try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o700],
+                                               ofItemAtPath: base.path)
         return base.appendingPathComponent("index.idx")
     }
 
@@ -59,19 +69,23 @@ actor IndexActor {
             cachedQueryKey = key
         }
         let sorted = engine.sortedPrefix(cachedIDs, by: sort, ascending: ascending, limit: max(1, limit), in: store)
-        return sorted.map { id in
+        let records = sorted.map { id in
             FileRecord(id: id, name: store.name(of: id), path: store.path(of: id),
                        parent: store.parent(of: id),
                        size: store.size(of: id), mtime: store.mtime(of: id),
                        isDir: store.isDir(of: id), volID: store.volID(of: id))
         }
+        lastSort = sort
+        visibleResultPaths = Set(records.map(\.path))
+        return records
     }
 
     func path(of id: UInt32) -> String { store.path(of: id) }
 
     func currentRules() -> ExcludeRules { rules }
 
-    func setRules(_ r: ExcludeRules) {
+    func setRules(_ r: ExcludeRules, accessGeneration expectedGeneration: UInt64? = nil) {
+        guard expectedGeneration == nil || expectedGeneration == accessGeneration else { return }
         rules = r
         liveRules = effectiveRules()
         if let data = try? JSONEncoder().encode(r) {
@@ -130,22 +144,52 @@ actor IndexActor {
     // worker threads (ParallelScanner), so the actor stays free to serve searches
     // against the existing index while the new one builds — no scan↔search
     // contention, all cores busy. The finished store is swapped in atomically.
-    func rescanAll() async {
+    func rescanAll(accessGeneration expectedGeneration: UInt64? = nil) async {
+        guard accessEnabled,
+              expectedGeneration == nil || expectedGeneration == accessGeneration else { return }
+        while isRescanning {
+            try? await Task.sleep(nanoseconds: 10_000_000)
+            guard accessEnabled, !Task.isCancelled else { return }
+        }
+        guard !Task.isCancelled else { return }
+        isRescanning = true
+        let scanGeneration = accessGeneration
+        defer { isRescanning = false }
+        // Take the checkpoint before stopping the stream. Events generated while the
+        // scanner runs are replayed into the finished snapshot from this point.
+        let checkpoint = UInt64(FSEventsGetCurrentEventId())
+        stopMonitor()
+        pendingDirs.removeAll(keepingCapacity: true)
+        pendingDeep.removeAll(keepingCapacity: true)
+        pendingMetadata.removeAll(keepingCapacity: true)
+        retryCounts.removeAll(keepingCapacity: true)
+        pendingMaxEventID = 0
+        pendingFullRescan = false
+        drainScheduled = false
+
         let effective = effectiveRules()
+        liveRules = effective
         let prog = onProgress
         let newStore = await Task.detached(priority: .userInitiated) {
             ParallelScanner.scanWholeDisk(rules: effective) { count in prog?(count) }
         }.value
+        guard accessEnabled, accessGeneration == scanGeneration, !Task.isCancelled else { return }
         store = newStore
         cachedQueryKey = nil
-        onProgress?(store.count)
+        lastEventID = checkpoint
+        onProgress?(store.liveCount)
+        startMonitor()
     }
 
     // Launch path: load the cache if present (FSEvents replays any changes made
     // while we were closed), otherwise do a full scan and save a fresh cache.
     // Then start the live monitor from the saved event id.
     func startUp(onLiveChange: @escaping @Sendable () -> Void,
-                 onProgress: @escaping @Sendable (Int) -> Void) async {
+                 onProgress: @escaping @Sendable (Int) -> Void,
+                 accessGeneration requestedGeneration: UInt64) async {
+        guard requestedGeneration >= accessGeneration else { return }
+        accessGeneration = requestedGeneration
+        accessEnabled = true
         self.onLiveChange = onLiveChange
         self.onProgress = onProgress
         liveRules = effectiveRules()   // before the monitor starts firing live reconciles
@@ -160,12 +204,13 @@ actor IndexActor {
            !Self.isContaminated(loaded) {
             store = loaded
             lastEventID = evid
+            startMonitor()
         } else {
             await rescanAll()
-            lastEventID = FSEventsGetCurrentEventId()
+            guard accessEnabled, requestedGeneration == accessGeneration,
+                  !Task.isCancelled else { return }
             try? IndexCache.save(store, to: url, lastEventID: lastEventID, rulesFingerprint: fingerprint)
         }
-        startMonitor()
     }
 
     // A clean scan excludes the Data volume's firmlink back-door, so a healthy index
@@ -179,12 +224,62 @@ actor IndexActor {
     }
 
     private func startMonitor() {
-        let m = LiveMonitor(onChanged: { [weak self] changes in
-            guard let self else { return }
-            Task { await self.enqueueChanges(changes) }
-        })
-        m.start(paths: watchPaths(), sinceWhen: FSEventStreamEventId(lastEventID))
+        stopMonitor()
+        let stream = AsyncStream<[LiveMonitor.FSChange]> { eventContinuation = $0 }
+        eventConsumer = Task { [weak self] in
+            for await changes in stream {
+                guard !Task.isCancelled else { return }
+                await self?.enqueueChanges(changes)
+            }
+        }
+        let continuation = eventContinuation
+        let m = LiveMonitor(onChanged: { changes in continuation?.yield(changes) })
+        guard m.start(paths: watchPaths(), sinceWhen: FSEventStreamEventId(lastEventID)) else {
+            eventContinuation?.finish()
+            eventContinuation = nil
+            eventConsumer?.cancel()
+            eventConsumer = nil
+            // A transient stream-creation failure must not leave a permanently static
+            // index. Retry from the last fully processed event checkpoint.
+            monitorRetry = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                guard !Task.isCancelled else { return }
+                await self?.startMonitor()
+            }
+            return
+        }
+        monitorRetry?.cancel()
+        monitorRetry = nil
         monitor = m
+    }
+
+    private func stopMonitor() {
+        monitor?.stop()
+        monitor = nil
+        eventContinuation?.finish()
+        eventContinuation = nil
+        eventConsumer?.cancel()
+        eventConsumer = nil
+        monitorRetry?.cancel()
+        monitorRetry = nil
+    }
+
+    func invalidateForAccessRevocation(generation requestedGeneration: UInt64) {
+        guard requestedGeneration >= accessGeneration else { return }
+        accessGeneration = requestedGeneration
+        accessEnabled = false
+        stopMonitor()
+        pendingDirs.removeAll()
+        pendingDeep.removeAll()
+        pendingMetadata.removeAll()
+        retryCounts.removeAll()
+        pendingMaxEventID = 0
+        pendingFullRescan = false
+        drainScheduled = false
+        store = FileStore()
+        cachedQueryKey = nil
+        cachedIDs.removeAll()
+        try? FileManager.default.removeItem(at: Self.cacheURL())
     }
 
     // An FSEvents stream rooted at "/" only covers the boot volume's hierarchy
@@ -225,14 +320,34 @@ actor IndexActor {
     // Data paths are mapped back to canonical so they resolve against the index.
     private var pendingDirs: Set<String> = []
     private var pendingDeep: Set<String> = []
+    private var pendingMetadata: Set<String> = []
+    private var pendingMaxEventID: UInt64 = 0
+    private var pendingFullRescan = false
+    private var retryCounts: [String: Int] = [:]
     private var drainScheduled = false
     private var draining = false
 
     func enqueueChanges(_ changes: [LiveMonitor.FSChange]) {
+        // The stopped stream's last callbacks can already be queued when a rebuild
+        // starts. The new stream replays everything after the pre-scan checkpoint.
+        guard accessEnabled, !isRescanning else { return }
         for c in changes {
             let p = LiveMonitor.canonicalEventPath(c.path)
-            pendingDirs.insert(p)
-            if c.mustScanSubtree { pendingDeep.insert(p) }
+            pendingMaxEventID = max(pendingMaxEventID, c.eventID)
+            if c.mountChanged {
+                pendingFullRescan = true
+            } else if c.mustScanSubtree {
+                pendingDirs.insert(p)
+                pendingDeep.insert(p)
+            } else {
+                if c.structural {
+                    let parent = (p as NSString).deletingLastPathComponent
+                    pendingDirs.insert(parent.isEmpty ? "/" : parent)
+                }
+                if c.metadataChanged { pendingMetadata.insert(p) }
+                // A flagless event retains the directory-level API semantics.
+                if !c.structural && !c.metadataChanged { pendingDirs.insert(p) }
+            }
         }
         // A drain is already pending or running — it will sweep up what we just added.
         guard !drainScheduled, !draining else { return }
@@ -253,45 +368,112 @@ actor IndexActor {
         // re-listed by a sibling or descendant event in the same pass.
         var newlyIndexed = Set<String>()
         // Loop until the backlog is empty so changes that arrive mid-drain aren't lost.
-        while !pendingDirs.isEmpty {
+        while !pendingDirs.isEmpty || !pendingMetadata.isEmpty || pendingFullRescan {
+            if pendingFullRescan {
+                pendingFullRescan = false
+                await rescanAll()
+                onLiveChange?()
+                return
+            }
             let dirs = pendingDirs.sorted()          // ancestors first
             let deep = pendingDeep
+            let metadata = pendingMetadata
+            let processedEventID = pendingMaxEventID
             pendingDirs.removeAll(keepingCapacity: true)
             pendingDeep.removeAll(keepingCapacity: true)
-            var changed = false
+            pendingMetadata.removeAll(keepingCapacity: true)
+            pendingMaxEventID = 0
+            var structuralChanged = false
+            var visibleMetadataChanged = false
+            var retryNeeded = false
+            var retryDelay: UInt64 = 1_000_000_000
+            for path in metadata {
+                switch LiveMonitor.refreshMetadataStatus(path: path, in: &store) {
+                case .changed:
+                    retryCounts.removeValue(forKey: "m:" + path)
+                    if lastSort == .size || lastSort == .mtime || visibleResultPaths.contains(path) {
+                        visibleMetadataChanged = true
+                    }
+                case .retry:
+                    let key = "m:" + path
+                    let attempts = retryCounts[key, default: 0] + 1
+                    retryCounts[key] = attempts
+                    pendingMetadata.insert(path)
+                    retryNeeded = true
+                    retryDelay = max(retryDelay, Self.retryDelay(for: attempts))
+                case .noChange:
+                    retryCounts.removeValue(forKey: "m:" + path)
+                }
+            }
             for d in dirs {
                 // A MustScanSubDirs (deep) event resyncs the whole live subtree under `d`;
                 // a normal event resyncs just `d`. The descent is ITERATIVE — an explicit
                 // stack with an `await` between levels — never a synchronous recursion,
                 // which walked the whole subtree in one uninterruptible call and froze the
-                // actor (search shares it). A deep event on a VOLUME ROOT ("/", which the
-                // firmlinked Data volume canonicalizes to, or a /Volumes mount) would mean
-                // re-walking the entire disk — millions of dirs — so it's demoted to a
-                // single level; the launch event replay and File ▸ Rebuild Index cover that
-                // rare drop.
-                let descend = deep.contains(d) && !Self.isVolumeRoot(d)
+                // actor (search shares it). A volume-root deep event means FSEvents
+                // lost information about the whole monitored tree, so rebuild from a
+                // checkpoint instead of leaving deeper entries stale.
+                if deep.contains(d), Self.isVolumeRoot(d) {
+                    await rescanAll()
+                    onLiveChange?()
+                    return
+                }
+                let descend = deep.contains(d)
                 var stack = [d]
                 while let dir = stack.popLast() {
-                    if LiveMonitor.reconcileLevel(directory: dir, in: &store, rules: liveRules, volID: 1,
-                                                  descend: descend, newlyIndexedDirs: &newlyIndexed,
-                                                  pushChildDirsTo: &stack) { changed = true }
+                    switch LiveMonitor.reconcileLevelStatus(
+                        directory: dir, in: &store, rules: liveRules, volID: 1,
+                        descend: descend, newlyIndexedDirs: &newlyIndexed,
+                        pushChildDirsTo: &stack
+                    ) {
+                    case .changed:
+                        retryCounts.removeValue(forKey: "d:" + dir)
+                        structuralChanged = true
+                    case .retry:
+                        // Some safe additions/metadata may already have been applied
+                        // before an incomplete directory snapshot was detected.
+                        structuralChanged = true
+                        let key = "d:" + dir
+                        let attempts = retryCounts[key, default: 0] + 1
+                        retryCounts[key] = attempts
+                        pendingDirs.insert(dir)
+                        if descend { pendingDeep.insert(dir) }
+                        retryNeeded = true
+                        retryDelay = max(retryDelay, Self.retryDelay(for: attempts))
+                    case .noChange:
+                        retryCounts.removeValue(forKey: "d:" + dir)
+                    }
                     processed += 1
                     // Suspend periodically so a queued search/sort runs instead of waiting
                     // for the whole drain — this is what keeps the UI responsive under churn.
                     if processed % 64 == 0 { await Task.yield() }
                 }
             }
-            if changed {
+            if structuralChanged {
                 cachedQueryKey = nil
-                onLiveChange?()
             }
+            if structuralChanged || visibleMetadataChanged { onLiveChange?() }
+            if retryNeeded {
+                pendingMaxEventID = max(pendingMaxEventID, processedEventID)
+                drainScheduled = true
+                Task { [weak self] in
+                    try? await Task.sleep(nanoseconds: retryDelay)
+                    guard !Task.isCancelled else { return }
+                    await self?.drainChanges()
+                }
+                return
+            }
+            lastEventID = max(lastEventID, processedEventID)
         }
     }
 
-    // A MustScanSubDirs on a volume root means FSEvents lost track of an entire volume, so
-    // a deep re-walk from here would be the whole disk. drainChanges resyncs only the top
-    // level in that case. "/" covers the boot + firmlinked Data volume (Data paths are
-    // canonicalized to "/"); "/Volumes/<name>" is an external mount root.
+    private static func retryDelay(for attempt: Int) -> UInt64 {
+        let seconds = min(60, 1 << min(max(0, attempt - 1), 6))
+        return UInt64(seconds) * 1_000_000_000
+    }
+
+    // "/" covers the boot + firmlinked Data volume; "/Volumes/<name>" is an
+    // external mount root. Deep events at either root require a complete rebuild.
     private static func isVolumeRoot(_ path: String) -> Bool {
         if path == "/" || path == "/System/Volumes/Data" { return true }
         if path.hasPrefix("/Volumes/") { return !path.dropFirst("/Volumes/".count).contains("/") }
@@ -307,23 +489,34 @@ actor IndexActor {
     // readdir when its contents actually changed. Shallow (one level) on purpose:
     // a deep subtree walk would lstat the entire subtree every tick, which is not free.
     func sweepUserFolders() {
+        guard accessEnabled, !isRescanning else { return }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
         let targets = ["Desktop", "Documents", "Downloads"].map { home + "/" + $0 }
         var newlyIndexed = Set<String>()
         var changed = false
         for dir in targets {
-            if LiveMonitor.reconcile(directory: dir, in: &store, rules: liveRules, volID: 1,
-                                     newlyIndexedDirs: &newlyIndexed) { changed = true }
+            if LiveMonitor.reconcileStatus(directory: dir, in: &store, rules: liveRules, volID: 1,
+                                           newlyIndexedDirs: &newlyIndexed) == .changed { changed = true }
         }
         guard changed else { return }
         cachedQueryKey = nil
         onLiveChange?()
     }
 
-    // Persist the current store + a fresh event id so the next launch can replay
-    // only the changes that happened after this point.
-    func flush() {
-        lastEventID = FSEventsGetCurrentEventId()
+    // Persist the current store and the highest event fully applied to it.
+    func flush(accessGeneration expectedGeneration: UInt64? = nil) {
+        guard accessEnabled,
+              expectedGeneration == nil || expectedGeneration == accessGeneration else { return }
+        // Bound in-memory churn without paying for an O(n) rebuild on every deletion.
+        // The serializer independently omits every tombstone from the durable cache.
+        let compactThreshold = max(100_000, store.count / 10)
+        if store.deletedCount >= compactThreshold {
+            store = store.compacted()
+            cachedQueryKey = nil
+            cachedIDs.removeAll(keepingCapacity: false)
+            visibleResultPaths.removeAll(keepingCapacity: false)
+            onLiveChange?()
+        }
         try? IndexCache.save(store, to: Self.cacheURL(), lastEventID: lastEventID,
                              rulesFingerprint: effectiveRules().fingerprint())
     }

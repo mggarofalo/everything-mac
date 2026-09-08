@@ -49,6 +49,7 @@ struct ResultsTable: NSViewRepresentable {
         menu.addItem(.separator())
         add("Move to Trash", #selector(Coordinator.ctxTrash))
         table.menu = menu
+        menu.delegate = context.coordinator
 
         let scroll = NSScrollView()
         scroll.documentView = table
@@ -63,12 +64,12 @@ struct ResultsTable: NSViewRepresentable {
         // Pin selection to the FILE, not the row index. A live-index refresh replaces
         // `results` ~constantly (FSEvents fires for any file change anywhere), and a
         // plain reloadData drops or visually shifts the highlight out from under the
-        // user's click. Capture the selected record's stable store id from the OLD
-        // rows, reload, then re-select that same id in the NEW rows (gone only if the
+        // user's click. Capture the selected record's stable path from the OLD
+        // rows, reload, then re-select that same path in the NEW rows (gone only if the
         // file dropped out of the result window).
-        let selectedID: UInt32? = {
+        let selectedPath: String? = {
             guard let t = table, t.selectedRow >= 0, t.selectedRow < coord.parent.rows.count else { return nil }
-            return coord.parent.rows[t.selectedRow].id
+            return coord.parent.rows[t.selectedRow].path
         }()
         coord.parent = self
         // Suppress the selection callback across reload+reselect: reloadData clears the
@@ -78,17 +79,26 @@ struct ResultsTable: NSViewRepresentable {
         coord.suppressSelectionCallback = true
         defer { coord.suppressSelectionCallback = false }
         table?.reloadData()
-        if let id = selectedID, let t = table,
-           let row = rows.firstIndex(where: { $0.id == id }) {
+        if let path = selectedPath, let t = table,
+           let row = rows.firstIndex(where: { $0.path == path }) {
             t.selectRowIndexes(IndexSet(integer: row), byExtendingSelection: false)
+        } else if selectedPath != nil {
+            // The selected file left the result set. Clear the model after this view
+            // update so menu actions cannot retain and later act on the stale path.
+            DispatchQueue.main.async { [weak coord] in
+                guard let coord, coord.table?.selectedRow == -1 else { return }
+                coord.parent.onSelect(nil)
+            }
         }
     }
 
-    final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
+    @MainActor final class Coordinator: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSMenuDelegate {
         var parent: ResultsTable
         weak var table: NSTableView?
         weak var openWithMenu: NSMenu?
         var suppressSelectionCallback = false
+        var contextRecord: FileRecord?
+        var contextIdentity: ResultActions.ItemIdentity?
         init(_ p: ResultsTable) { parent = p }
 
         func numberOfRows(in tableView: NSTableView) -> Int { parent.rows.count }
@@ -177,14 +187,28 @@ struct ResultsTable: NSViewRepresentable {
 
         // Context-menu handlers — resolve the right-clicked row, then delegate to ResultActions.
         private func clickedRecord() -> FileRecord? {
-            guard let r = table?.clickedRow, r >= 0, r < parent.rows.count else { return nil }
-            return parent.rows[r]
+            contextRecord
         }
         @objc func ctxOpen()     { if let r = clickedRecord() { ResultActions.open(r) } }
         @objc func ctxReveal()   { if let r = clickedRecord() { ResultActions.reveal(r) } }
         @objc func ctxCopyPath() { if let r = clickedRecord() { ResultActions.copyPath(r) } }
         @objc func ctxCopyName() { if let r = clickedRecord() { ResultActions.copyName(r) } }
-        @objc func ctxTrash()    { if let r = clickedRecord() { ResultActions.trash(r) } }
+        @objc func ctxTrash() {
+            if let r = clickedRecord() { ResultActions.trash(r, expected: contextIdentity) }
+        }
+
+        func menuWillOpen(_ menu: NSMenu) {
+            guard menu === table?.menu, let row = table?.clickedRow,
+                  row >= 0, row < parent.rows.count else { return }
+            contextRecord = parent.rows[row]
+            contextIdentity = contextRecord.flatMap { ResultActions.identity(for: $0) }
+        }
+
+        func menuDidClose(_ menu: NSMenu) {
+            guard menu === table?.menu else { return }
+            contextRecord = nil
+            contextIdentity = nil
+        }
 
         // Notepad Studio is always pinned in the submenu so any file — even one with
         // no associated app — can be opened with it. Resolved by bundle id at runtime
