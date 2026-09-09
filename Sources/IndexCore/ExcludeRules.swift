@@ -122,7 +122,12 @@ public struct ExcludeRules: Sendable, Codable, Equatable {
             if Self.devFolderNames.contains(name) { return true }
             if inProjectDir && Self.markerScopedDevFolderNames.contains(name) { return true }
         }
-        for prefix in pathPrefixes where path.hasPrefix(prefix) { return true }
+        for rawPrefix in pathPrefixes {
+            let prefix = rawPrefix.count > 1 && rawPrefix.hasSuffix("/")
+                ? String(rawPrefix.dropLast()) : rawPrefix
+            if prefix == "/" { return true }
+            if path == prefix || path.hasPrefix(prefix + "/") { return true }
+        }
         return false
     }
 

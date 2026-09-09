@@ -4,11 +4,9 @@ Type part of a filename and every file and folder that matches shows up instantl
 
 ![EverythingMac searching across 8.2 million files](assets/screenshot.png)
 
-**[Download the latest release](https://github.com/alesloa/everything-mac/releases/latest)** (macOS 14+), or [build it from source](#build-and-run).
+This fork currently supports local source builds on macOS 14 or newer.
 
 > The folder is called `everything-rust` for historical reasons. There's no Rust in it. The whole app is Swift (SwiftUI and AppKit).
->
-> This build isn't notarized by Apple, so on first open macOS will block it. Either run `xattr -dr com.apple.quarantine /Applications/EverythingMac.app`, or right-click the app and choose Open. See the [release notes](https://github.com/alesloa/everything-mac/releases/latest) for details.
 
 ## Why I built it
 
@@ -25,7 +23,8 @@ So I wrote my own. It reads every filename on the machine into memory and search
 - Standard results table with Name, Path, Size, Kind, and Date Modified. Click a header to sort.
 - Shows the real file-type icon and a readable kind for each row.
 - Right-click menu: Open, Open With (lists every app associated with the file, plus a "Choose Application…" option to open it with anything), Reveal in Finder, Copy Path, Copy Name, Move to Trash.
-- Handles millions of files without choking. The index is a flat array scanned in parallel across all cores.
+- Handles millions of files through compact substring postings, with a parallel full-scan fallback for short or wildcard queries.
+- Runs as 3 processes: a persistent indexer, a persistent search endpoint, and a disposable UI. Quitting the UI does not stop indexing.
 
 ## Requirements
 
@@ -36,25 +35,33 @@ So I wrote my own. It reads every filename on the machine into memory and search
 ## Build and run
 
 ```bash
-git clone https://github.com/alesloa/everything-mac.git
+git clone https://github.com/mggarofalo/everything-mac.git
 cd everything-mac
 ./scripts/build-dev.sh
 ```
 
-The script generates the Xcode project from `App/project.yml`, builds a Release binary, and copies the app into `/Applications`. Build Release, not Debug. The search loop runs about 100x slower without optimization.
+The script generates the Xcode project, builds a hardened Release binary, verifies its signature and entitlements, and copies the app into `/Applications`. Build Release, not Debug. The search loop runs about 100 times slower without optimization.
 
 ### Signing it as yourself
 
-`App/project.yml` has my Apple Development identity hardcoded so Full Disk Access doesn't get revoked every time I rebuild on my own machine. To build it on yours, do one of these:
+The build script selects the first Apple Development identity in your login keychain. Set `LOCAL_SIGN_IDENTITY` when you want another identity:
 
-- Open `App/EverythingMac.xcodeproj` in Xcode, select the EverythingMac target, go to Signing & Capabilities, turn on "Automatically manage signing," and pick your team.
-- Or edit `CODE_SIGN_IDENTITY` and `DEVELOPMENT_TEAM` in `App/project.yml` to your own values and re-run `./scripts/build-dev.sh`.
+```bash
+LOCAL_SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" ./scripts/build-dev.sh
+```
 
 ### Full Disk Access
 
-The app can only index everything if you give it Full Disk Access:
+The indexing agent needs its own one-time Full Disk Access grant. Open System
+Settings > Privacy & Security > Full Disk Access, press `+`, then press
+Command-Shift-G in the file picker and enter:
 
-System Settings > Privacy & Security > Full Disk Access > turn on EverythingMac.
+```text
+/Applications/EverythingMac.app/Contents/MacOS/EverythingMacIndexer
+```
+
+The UI does not need Full Disk Access. The search service only receives filename
+query requests and results from the indexer.
 
 The first launch scans the whole disk and writes the index to a cache, so it takes a few minutes depending on how many files you have. After that it starts instantly and picks up file changes as they happen.
 
@@ -62,11 +69,56 @@ The first launch scans the whole disk and writes the index to a cache, so it tak
 
 Launch it and start typing. Matches show up right away. Click a column header to sort. Double-click a row to open it, or right-click for Open With, Reveal in Finder, Copy Path, Move to Trash, and the rest.
 
+The sliders button at the right of the search field contains Match Path, Match Case,
+and Match Whole Word options. The options are remembered between launches.
+
+Filename text and metadata filters form Boolean expressions. Spaces imply `AND`;
+uppercase `AND`, `OR`, `XOR`, and `NOT` are operators. Parentheses control grouping.
+Operators appear as pills in the editor, while lowercase words such as `or` remain
+ordinary filename text.
+
+- `in:~/Downloads` matches that folder and its descendants. Quote values containing
+  spaces, for example `in:"~/Project Files"`.
+- `filetype:md` finds Markdown files; `filetype:doc,docx` accepts either extension.
+- `type:file` and `type:folder` restrict the result kind.
+- `size:>100mb` and `size:1mb..10mb` filter by file size.
+- `modified:today`, `modified:7d`, and `modified:2026-09-01..2026-09-08` filter by date.
+- `path:Sources` always matches the full path; `name:Sources` always matches the name.
+- `regex:handoff\.md$` matches names ending in `handoff.md`; use `rx:` as a short alias.
+- `limit:100` caps the returned rows after filtering and sorting.
+
+Examples:
+
+```text
+marvel in:~/Desktop
+in:~/Desktop OR in:~/Downloads
+(marvel in:~/Desktop) OR (codex in:~/Downloads type:folder)
+in:~/Desktop (rx OR codex OR release OR marvel OR filetype:md)
+package in:~/Source NOT path:node_modules
+```
+
+Type part of a filter or operator to open contextual suggestions, then press Tab or
+click a row to complete it. Invalid expressions are explained directly below the
+field. Regex normally examines the filename; enable Match Path to examine the full
+path. Quote regex values containing spaces or parentheses.
+
 ## How it works
 
 - Every filename lives in one big UTF-8 buffer, with the metadata (size, dates, flags) held in parallel arrays alongside it. That whole structure gets written to a binary cache so restarts are fast.
-- A search runs as a parallel substring scan across all CPU cores, feeding a fixed-size max-heap that keeps only the top results. That's what keeps typing responsive even with millions of records.
-- An FSEvents watcher folds new, renamed, and deleted files back into the index so it never needs a full rescan.
+- A derived trigram index maps filename and path-component substrings to delta/varint-encoded record-ID postings in one byte arena. Searches start from the rarest posting and verify only those candidate paths; short and wildcard queries retain the parallel full-scan fallback. The measured 76-million-entry derived index occupies about 100 MB at steady state.
+- Boolean queries compile to an expression tree. `AND` starts with the cheapest
+  indexed or directory candidate set and refines it; `OR` unions sorted IDs and
+  `XOR` computes their symmetric difference.
+- Newer keystroke queries cancel obsolete searches already executing in the indexer, so stale work cannot queue ahead of what is currently in the field.
+- An FSEvents watcher folds new, renamed, deleted, and modified files back into the index.
+
+The app checkpoints only events that it has processed. It replays changes made during scans and performs a complete rebuild when FSEvents reports lost history.
+
+## Tests
+
+```bash
+swift test
+```
 
 ## License
 

@@ -34,6 +34,7 @@ public struct FileStore: Sendable {
     public init() {}
 
     public var count: Int { parents.count }
+    public var liveCount: Int { count - deletedCount }
 
     /// Appends a new record to the store and returns its id.
     /// `name` must be a single path component (≤ NAME_MAX = 255 bytes).
@@ -112,6 +113,21 @@ public struct FileStore: Sendable {
         return (start + dot + 1, len - dot - 1)
     }
 
+    /// Exact ASCII-case-insensitive extension match without allocating a String.
+    /// `extensionLowerBytes` must already contain lowercase ASCII without a dot.
+    public func extensionMatches(_ extensionLowerBytes: [UInt8], of id: UInt32) -> Bool {
+        let range = extRange(of: id)
+        guard range.len == extensionLowerBytes.count else { return false }
+        return nameBytes.withUnsafeBufferPointer { bytes in
+            for offset in 0..<range.len {
+                var byte = bytes[range.start + offset]
+                if byte >= 65 && byte <= 90 { byte &+= 32 }
+                if byte != extensionLowerBytes[offset] { return false }
+            }
+            return true
+        }
+    }
+
     // Order by file "kind": directories first (grouped), then files grouped by
     // extension (ASCII case-insensitive), with name as the tiebreak so equal
     // kinds stay name-ordered. Same allocation-free byte path as nameSortsBefore.
@@ -146,6 +162,38 @@ public struct FileStore: Sendable {
     public func isLive(_ id: UInt32) -> Bool { live[Int(id)] }
     public mutating func markDeleted(_ id: UInt32) {
         if live[Int(id)] { live[Int(id)] = false; deletedCount += 1 }
+    }
+
+    public mutating func updateMetadata(of id: UInt32, size: UInt64, mtime: Int64) {
+        sizes[Int(id)] = size
+        mtimes[Int(id)] = mtime
+    }
+
+    /// Return a store containing only live records. Record identifiers are internal
+    /// append positions, so callers must invalidate cached identifiers after compacting.
+    public func compacted() -> FileStore {
+        guard hasDeletions else { return self }
+        var result = FileStore()
+        var remapped = [UInt32](repeating: Self.noParent, count: count)
+
+        for index in 0..<count {
+            let oldID = UInt32(index)
+            guard isLive(oldID) else { continue }
+            let oldParent = parent(of: oldID)
+            let newParent: UInt32
+            if oldParent == Self.noParent {
+                newParent = Self.noParent
+            } else {
+                let mappedParent = remapped[Int(oldParent)]
+                guard mappedParent != Self.noParent else { continue }
+                newParent = mappedParent
+            }
+            let newID = result.append(name: name(of: oldID), parent: newParent,
+                                      size: size(of: oldID), mtime: mtime(of: oldID),
+                                      isDir: isDir(of: oldID), volID: volID(of: oldID))
+            remapped[index] = newID
+        }
+        return result
     }
 
     /// Live-reconcile fast path: the mtime (nanoseconds) a directory was last
@@ -216,6 +264,7 @@ public struct FileStore: Sendable {
     }
 
     func serializedBinary() -> Data {
+        if hasDeletions { return serializedLiveBinary() }
         var data = Data()
         data.append(contentsOf: Self.magic)
         Self.appendArray(nameBytes, to: &data)
@@ -227,6 +276,61 @@ public struct FileStore: Sendable {
         Self.appendArray(flags, to: &data)
         Self.appendArray(volIDs, to: &data)
         Self.appendArray(live, to: &data)
+        return data
+    }
+
+    /// Serialize only live records without constructing a second full FileStore.
+    /// This keeps deleted filenames out of the durable cache while bounding peak
+    /// memory during a multi-million-record save to the output Data plus one array.
+    private func serializedLiveBinary() -> Data {
+        var data = Data()
+        data.append(contentsOf: Self.magic)
+
+        var liveNameByteCount: UInt64 = 0
+        for i in 0..<count where live[i] { liveNameByteCount += UInt64(nameLen[i]) }
+        withUnsafeBytes(of: &liveNameByteCount) { data.append(contentsOf: $0) }
+        for i in 0..<count where live[i] {
+            let start = Int(nameOffset[i])
+            let end = start + Int(nameLen[i])
+            data.append(contentsOf: nameBytes[start..<end])
+        }
+
+        var offsets: [UInt32] = []
+        offsets.reserveCapacity(liveCount)
+        var offset: UInt32 = 0
+        for i in 0..<count where live[i] {
+            offsets.append(offset)
+            offset &+= UInt32(nameLen[i])
+        }
+        Self.appendArray(offsets, to: &data)
+        offsets.removeAll(keepingCapacity: false)
+
+        func appendFiltered<T>(_ values: [T], to data: inout Data) {
+            var filtered: [T] = []
+            filtered.reserveCapacity(liveCount)
+            for i in 0..<count where live[i] { filtered.append(values[i]) }
+            Self.appendArray(filtered, to: &data)
+        }
+
+        appendFiltered(nameLen, to: &data)
+
+        var remapped = [UInt32](repeating: Self.noParent, count: count)
+        var mappedParents: [UInt32] = []
+        mappedParents.reserveCapacity(liveCount)
+        var nextID: UInt32 = 0
+        for i in 0..<count where live[i] {
+            let oldParent = parents[i]
+            mappedParents.append(oldParent == Self.noParent ? Self.noParent : remapped[Int(oldParent)])
+            remapped[i] = nextID
+            nextID &+= 1
+        }
+        Self.appendArray(mappedParents, to: &data)
+
+        appendFiltered(sizes, to: &data)
+        appendFiltered(mtimes, to: &data)
+        appendFiltered(flags, to: &data)
+        appendFiltered(volIDs, to: &data)
+        Self.appendArray([Bool](repeating: true, count: liveCount), to: &data)
         return data
     }
 

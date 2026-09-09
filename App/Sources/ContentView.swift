@@ -3,6 +3,7 @@ import IndexCore
 
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
+    @Environment(\.scenePhase) private var scenePhase
     @State private var fdaGranted = true
     @FocusState private var searchFocused: Bool
 
@@ -11,7 +12,7 @@ struct ContentView: View {
             if !fdaGranted {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text("Grant Full Disk Access to index everything.")
+                    Text("Grant Full Disk Access to EverythingMacIndexer.")
                     Spacer()
                     Button("Open Settings") { FullDiskAccess.openSettings() }
                 }
@@ -19,20 +20,37 @@ struct ContentView: View {
                 .background(.yellow.opacity(0.2))
                 Divider()
             }
-            SearchField(text: $model.query, matchPath: $model.matchPath, focused: $searchFocused) { model.queryChanged() }
+            SearchField(text: $model.query,
+                        matchPath: $model.matchPath,
+                        caseSensitive: $model.caseSensitive,
+                        wholeWord: $model.wholeWord,
+                        focused: $searchFocused,
+                        onTextChange: { model.queryChanged() },
+                        onOptionsChange: { model.searchOptionsChanged() })
             Divider()
             ResultsTable(rows: model.results,
                          onSort: { k, a in model.setSort(k, ascending: a) },
-                         onSelect: { model.selectedID = $0?.id },
+                         onSelect: { model.select($0) },
                          onActivate: { ResultActions.open($0) })
             Divider()
             StatusBar(total: model.total, shown: model.results.count, scanning: model.scanning)
         }
         .background(.regularMaterial)
         .onAppear {
-            fdaGranted = FullDiskAccess.isGranted()
+            refreshAccess()
             searchFocused = true
         }
+        .onChange(of: scenePhase) {
+            if scenePhase == .active { refreshAccess() }
+        }
         .onChange(of: model.focusSearchSignal) { searchFocused = true }
+    }
+
+    private func refreshAccess() {
+        Task {
+            let granted = await model.index.serviceHasFullDiskAccess()
+            fdaGranted = granted
+            model.updateFullDiskAccess(granted)
+        }
     }
 }

@@ -8,6 +8,7 @@ import IndexCore
 struct VolumesSettingsView: View {
     @ObservedObject var edit: SettingsModel
     var apply: () -> Void
+    var canApply: Bool
     @State private var volumes: [VolumeInfo] = []
 
     struct VolumeInfo: Identifiable {
@@ -58,6 +59,7 @@ struct VolumesSettingsView: View {
                     Spacer()
                     Button("Apply & Re-index", action: apply)
                         .keyboardShortcut(.defaultAction)
+                        .disabled(!canApply)
                 }
             }
         }

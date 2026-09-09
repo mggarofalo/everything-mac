@@ -12,7 +12,9 @@ struct SearchSettingsView: View {
             Section("Match options") {
                 Toggle("Match case", isOn: caseBinding)
                 Toggle("Match whole word", isOn: wholeBinding)
+                    .disabled(model.usesRegularExpression)
                 Toggle("Search full path (not just the name)", isOn: matchPathBinding)
+                Toggle("Regular expression", isOn: regularExpressionBinding)
             }
             Section("Results") {
                 Picker("Sort by", selection: sortBinding) {
@@ -26,7 +28,7 @@ struct SearchSettingsView: View {
                     Text("Ascending").tag(true)
                     Text("Descending").tag(false)
                 }
-                Stepper(value: limitBinding, in: 100...100_000, step: 100) {
+                Stepper(value: limitBinding, in: 100...10_000, step: 100) {
                     LabeledContent("Max results shown", value: model.resultLimit.formatted())
                 }
             }
@@ -43,6 +45,10 @@ struct SearchSettingsView: View {
     }
     private var matchPathBinding: Binding<Bool> {
         Binding(get: { model.matchPath }, set: { model.matchPath = $0; model.searchOptionsChanged() })
+    }
+    private var regularExpressionBinding: Binding<Bool> {
+        Binding(get: { model.usesRegularExpression },
+                set: { model.usesRegularExpression = $0; model.searchOptionsChanged() })
     }
     private var sortBinding: Binding<QueryEngine.SortKey> {
         Binding(get: { model.sortKey }, set: { model.setSort($0, ascending: model.ascending) })

@@ -1,5 +1,88 @@
 # Changelog
 
+## 0.8.0
+
+- Replace slash-command composition with colon filters and a Boolean expression
+  grammar supporting implicit/explicit `AND`, `OR`, `XOR`, `NOT`, and parentheses.
+- Add token-aware filter/operator completion and render uppercase Boolean operators
+  as rounded pills while preserving plain-text editing and copy/paste.
+- Plan conjunctions from their most selective directory or indexed predicate, so
+  branch-local filters do not force whole-index scans.
+
+## 0.7.1
+
+- Make `/filetype` consume one comma-separated argument, so ordinary filename
+  terms work before or after it without ambiguous parsing.
+- Allow `/filetype` as an `/or` alternative and evaluate small `/in` subtrees
+  directly instead of running every alternative across the whole index.
+- Show concise inline errors for unknown, incomplete, or invalid slash commands.
+
+## 0.7.0
+
+- Add composable `/in`, `/size`, `/modified`, `/type`, `/limit`, `/not`, and
+  `/or` search commands alongside `/filetype` and `/regex`.
+- Complete slash commands after existing search text and show concise syntax help
+  for every command in the search-field popover.
+- Evaluate indexed text first and refine its candidates with cheap metadata filters;
+  metadata-only searches scan the compact arrays without materializing every ID.
+
+## 0.6.2
+
+- Immediately cancel an in-flight service search when the query changes, so a
+  full-scan regex cannot hold up the indexed query that replaces it.
+
+## 0.6.1
+
+- Show clickable command suggestions when the search field starts with `/`, with
+  Tab completion once the typed prefix identifies one command.
+- Fix slash commands bypassing the component index in the background service,
+  which made installed filetype and regex searches far slower than core benchmarks.
+
+## 0.6.0
+
+- Add /filetype md and multi-extension searches such as /filetype doc docx.
+- Add regular-expression search through /regex pattern or the persistent Regex option.
+- Replace the search-field Match Path switch with a native sliders menu containing
+  Match Path, Match Case, Match Whole Word, and Regular Expression.
+- Seed common regex forms from mandatory literals in the trigram index and parallelize
+  expressions that require a full scan.
+
+## 0.5.2
+
+- Delta-encode trigram posting IDs into a single byte arena, reducing the measured
+  steady-state index cost from roughly 330 MB to 100 MB without regressing search latency.
+- Build compressed postings with exact two-pass sizing so temporary Swift arrays do
+  not erase the resident-memory savings.
+- Preserve case-sensitive filename semantics when the component index supplies candidates.
+
+## 0.5.1
+
+- Add a compact component trigram index that narrows substring and Match Path searches before reconstructing paths.
+- Cancel obsolete in-flight searches when a newer keystroke query arrives instead of letting whole-index work queue ahead of the final query.
+- Treat both `/` and `\\` as path separators in Match Path queries.
+
+## 0.5.0
+
+- Split the app into a persistent indexing agent, a persistent search endpoint, and a disposable UI client. Quitting the UI leaves indexing and search available.
+- Register both background agents with `SMAppService`, start them at login, and authenticate XPC clients by signing team and executable identity.
+
+## 0.4.1
+
+- Fix Match Path searches appearing frozen by matching plain terms through the parent hierarchy without rebuilding millions of full path strings.
+- Quit immediately instead of blocking the main thread while the entire index cache is serialized; periodic cache writes now run off the search actor too.
+
+## 0.4.0
+
+- Keep the index complete by checkpointing only fully processed FSEvents and replaying changes made during rebuilds.
+- Perform a full rebuild when FSEvents reports lost information at a volume root.
+- Track mounted volumes dynamically and avoid crawling newly mounted network shares.
+- Refresh file size, modification time, and file-versus-directory replacements from file-level events.
+- Preserve selections by path and confirm every Move to Trash action.
+- Wait for Full Disk Access before building or accepting the new cache format.
+- Compact deleted records and protect the filename cache with owner-only permissions.
+- Remove contributor-specific signing settings, enable hardened runtime, and exclude debug entitlements.
+- Publish and run the IndexCore test suite.
+
 All notable changes to EverythingMac are recorded here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the project follows
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html) (`MAJOR.MINOR.PATCH`).

@@ -9,10 +9,6 @@ App/EverythingMac.app
 *.xcworkspace
 .swiftpm/
 
-# Tests (not needed to build or run the app; Package.swift wires them in only
-# when the Tests directory is present)
-Tests/
-
 # macOS, logs, crash dumps
 .DS_Store
 *.log

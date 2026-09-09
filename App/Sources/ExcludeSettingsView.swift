@@ -7,6 +7,7 @@ import IndexCore
 struct ExcludeSettingsView: View {
     @ObservedObject var edit: SettingsModel
     var apply: () -> Void
+    var canApply: Bool
 
     var body: some View {
         Form {
@@ -37,6 +38,7 @@ struct ExcludeSettingsView: View {
                     Spacer()
                     Button("Apply & Re-index", action: apply)
                         .keyboardShortcut(.defaultAction)
+                        .disabled(!canApply)
                 }
             }
         }

@@ -1,22 +1,35 @@
 import ServiceManagement
 
-// Thin wrapper over SMAppService for the "Open at Login" setting (macOS 13+).
-// register()/unregister() are the modern replacement for the deprecated
-// SMLoginItemSetEnabled — no helper bundle needed for the main app itself.
-enum LaunchAtLogin {
-    static var isEnabled: Bool { SMAppService.mainApp.status == .enabled }
+@MainActor enum BackgroundServices {
+    private static let services = [
+        SMAppService.agent(plistName: "com.everythingmac.indexer.plist"),
+        SMAppService.agent(plistName: "com.everythingmac.search.plist"),
+    ]
 
-    // Returns the resulting state so the UI can reflect what actually happened
-    // (the call can throw — e.g. the app isn't in a location macOS will launch).
-    @discardableResult
-    static func set(_ enabled: Bool) -> Bool {
-        do {
-            if enabled { try SMAppService.mainApp.register() }
-            else { try SMAppService.mainApp.unregister() }
-        } catch {
-            // Silent-skip, matching the engine's error policy: surface the real state
-            // back to the toggle rather than throwing up a dialog.
+    static var areEnabled: Bool { services.allSatisfy { $0.status == .enabled } }
+    static var statusText: String {
+        services.map { service in
+            switch service.status {
+            case .enabled: return "Running"
+            case .requiresApproval: return "Needs approval"
+            case .notFound: return "Not installed"
+            case .notRegistered: return "Not registered"
+            @unknown default: return "Unavailable"
+            }
+        }.joined(separator: " / ")
+    }
+
+    static func install() {
+        let legacyMain = SMAppService.mainApp
+        let legacyHelper = SMAppService.loginItem(identifier: "com.everythingmac.loginhelper")
+        try? legacyMain.unregister()
+        try? legacyHelper.unregister()
+        for service in services where service.status != .enabled {
+            do {
+                try service.register()
+            } catch {
+                NSLog("EverythingMac could not register background service: %@", error.localizedDescription)
+            }
         }
-        return isEnabled
     }
 }
