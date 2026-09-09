@@ -4,6 +4,8 @@
 
 - Keep search matching options exclusively in the configuration menu beside the
   search field instead of duplicating them in the View menu.
+- Normalize the product name to `EverythingMac` in the window, generated menu
+  labels, documentation, and cache path while migrating existing index data.
 
 ## 0.9.0
 
