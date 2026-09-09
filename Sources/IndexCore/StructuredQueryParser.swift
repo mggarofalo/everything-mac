@@ -241,17 +241,13 @@ enum StructuredQueryParser {
             case "path":
                 return .predicate(.path(value))
             case "in":
-                let path = expandPath(value)
-                guard path.hasPrefix("/") else {
+                guard let path = QueryValueParser.absolutePath(value) else {
                     invalidate("in: expects an absolute path or one beginning with ~.")
                     return .predicate(.all)
                 }
                 return .predicate(.directory(path))
             case "filetype", "ext":
-                let extensions = value.split(separator: ",", omittingEmptySubsequences: false).map {
-                    String($0).trimmingCharacters(in: CharacterSet(charactersIn: "."))
-                }
-                guard !extensions.contains(where: { $0.isEmpty }) else {
+                guard let extensions = QueryValueParser.fileTypes(value) else {
                     invalidate("filetype: expects comma-separated extensions, such as md,docx.")
                     return .predicate(.all)
                 }
@@ -265,32 +261,29 @@ enum StructuredQueryParser {
                     return .predicate(.all)
                 }
             case "type":
-                switch value.lowercased() {
-                case "file", "files": return .predicate(.kind(.file))
-                case "folder", "folders", "directory", "directories":
-                    return .predicate(.kind(.folder))
-                default:
+                guard let kind = QueryValueParser.fileKind(value) else {
                     invalidate("type: expects file or folder.")
                     return .predicate(.all)
                 }
+                return .predicate(.kind(kind))
             case "size":
-                guard let constraint = parseSize(value) else {
+                guard let constraint = QueryValueParser.size(value) else {
                     invalidate("size: expects bytes such as >100mb or 1mb..1gb.")
                     return .predicate(.all)
                 }
                 return .predicate(.size(constraint))
             case "modified":
-                guard let constraint = parseModified(value) else {
+                guard let constraint = QueryValueParser.modified(value) else {
                     invalidate("modified: expects today, Nd, DATE, or DATE..DATE.")
                     return .predicate(.all)
                 }
                 return .predicate(.modified(constraint))
             case "limit":
-                guard let limit = Int(value), limit > 0 else {
+                guard let limit = QueryValueParser.limit(value) else {
                     invalidate("limit: expects a positive number.")
                     return .predicate(.all)
                 }
-                plan.limit = min(limit, 10_000)
+                plan.limit = limit
                 return .predicate(.all)
             default:
                 return .predicate(.text(word))
@@ -327,75 +320,5 @@ enum StructuredQueryParser {
             }
         }
 
-        func expandPath(_ path: String) -> String {
-            let expanded = (path as NSString).expandingTildeInPath
-            if expanded == "/" { return expanded }
-            return expanded.hasSuffix("/") ? String(expanded.dropLast()) : expanded
-        }
-
-        func parseSize(_ source: String) -> Query.SizeConstraint? {
-            if let separator = source.range(of: "..") {
-                guard let lower = byteCount(String(source[..<separator.lowerBound])),
-                      let upper = byteCount(String(source[separator.upperBound...])),
-                      lower <= upper else { return nil }
-                return .range(lower, upper)
-            }
-            let operators: [(String, (UInt64) -> Query.SizeConstraint)] = [
-                (">=", Query.SizeConstraint.atLeast), ("<=", Query.SizeConstraint.atMost),
-                (">", Query.SizeConstraint.greaterThan), ("<", Query.SizeConstraint.lessThan),
-                ("=", Query.SizeConstraint.exactly)
-            ]
-            for (prefix, make) in operators where source.hasPrefix(prefix) {
-                return byteCount(String(source.dropFirst(prefix.count))).map(make)
-            }
-            return byteCount(source).map(Query.SizeConstraint.exactly)
-        }
-
-        func byteCount(_ source: String) -> UInt64? {
-            let lower = source.lowercased()
-            let units: [(String, Double)] = [
-                ("tb", 1_099_511_627_776), ("gb", 1_073_741_824),
-                ("mb", 1_048_576), ("kb", 1_024), ("b", 1)
-            ]
-            let unit = units.first { lower.hasSuffix($0.0) }
-            let numberText = unit.map { String(lower.dropLast($0.0.count)) } ?? lower
-            guard let number = Double(numberText), number >= 0,
-                  number <= Double(UInt64.max) / (unit?.1 ?? 1) else { return nil }
-            return UInt64(number * (unit?.1 ?? 1))
-        }
-
-        func parseModified(_ source: String, now: Date = Date()) -> Query.ModifiedConstraint? {
-            let calendar = Calendar.current
-            let lower = source.lowercased()
-            if lower == "today" {
-                let start = calendar.startOfDay(for: now)
-                guard let end = calendar.date(byAdding: .day, value: 1, to: start) else { return nil }
-                return .range(Int64(start.timeIntervalSince1970), Int64(end.timeIntervalSince1970) - 1)
-            }
-            if lower.hasSuffix("d"), let days = Int(lower.dropLast()), days >= 0,
-               let start = calendar.date(byAdding: .day, value: -days, to: now) {
-                return .since(Int64(start.timeIntervalSince1970))
-            }
-            if let separator = source.range(of: "..") {
-                guard let start = parseDate(String(source[..<separator.lowerBound])),
-                      let endDay = parseDate(String(source[separator.upperBound...])),
-                      let end = calendar.date(byAdding: .day, value: 1, to: endDay),
-                      start <= endDay else { return nil }
-                return .range(Int64(start.timeIntervalSince1970), Int64(end.timeIntervalSince1970) - 1)
-            }
-            guard let day = parseDate(source),
-                  let end = calendar.date(byAdding: .day, value: 1, to: day) else { return nil }
-            return .range(Int64(day.timeIntervalSince1970), Int64(end.timeIntervalSince1970) - 1)
-        }
-
-        func parseDate(_ source: String) -> Date? {
-            let formatter = DateFormatter()
-            formatter.calendar = Calendar(identifier: .gregorian)
-            formatter.locale = Locale(identifier: "en_US_POSIX")
-            formatter.timeZone = Calendar.current.timeZone
-            formatter.dateFormat = "yyyy-MM-dd"
-            formatter.isLenient = false
-            return formatter.date(from: source)
-        }
     }
 }

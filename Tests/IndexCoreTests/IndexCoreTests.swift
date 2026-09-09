@@ -94,6 +94,29 @@ final class IndexCoreTests: XCTestCase {
         XCTAssertFalse(Query(text: "/filetype md,").plan.isValid)
     }
 
+    func testQuerySyntaxesShareValueGrammar() {
+        var store = FileStore()
+        let root = store.append(name: "/", parent: FileStore.noParent, size: 0,
+                                mtime: 0, isDir: true, volID: 1)
+        let users = store.append(name: "Users", parent: root, size: 0,
+                                 mtime: 0, isDir: true, volID: 1)
+        let me = store.append(name: "me", parent: users, size: 0,
+                              mtime: 0, isDir: true, volID: 1)
+        let small = store.append(name: "small.md", parent: me, size: 512,
+                                 mtime: 100, isDir: false, volID: 1)
+        let large = store.append(name: "large.md", parent: me, size: 2_048,
+                                 mtime: 200, isDir: false, volID: 1)
+        _ = store.append(name: "large.txt", parent: me, size: 2_048,
+                         mtime: 200, isDir: false, volID: 1)
+        let engine = QueryEngine()
+
+        let slash = Query(text: "/in /Users/me/ /filetype .md /type file /size >=1kb")
+        let structured = Query(text: "in:/Users/me/ filetype:.md type:file size:>=1kb")
+        XCTAssertEqual(engine.search(slash, in: store), [large])
+        XCTAssertEqual(engine.search(structured, in: store), [large])
+        XCTAssertNotEqual(engine.search(slash, in: store), [small])
+    }
+
     func testFileTypeAndRegularExpressionSearch() {
         var store = FileStore()
         let root = store.append(name: "/", parent: FileStore.noParent, size: 0,

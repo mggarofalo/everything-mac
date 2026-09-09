@@ -110,7 +110,7 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
                                              caseInsensitive: query.caseInsensitive,
                                              wholeWord: query.wholeWord,
                                              usesRegularExpression: query.usesRegularExpression,
-                                             sort: sortKey(query.sort), ascending: query.ascending,
+                                             sort: query.sort, ascending: query.ascending,
                                              limit: min(max(1, query.limit), 10_000),
                                              isCancelled: { [latestSearch] in
                                                  !latestSearch.isCurrent(searchGeneration)
@@ -143,15 +143,6 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
         return payload
     }
 
-    private func sortKey(_ name: String) -> QueryEngine.SortKey {
-        switch name {
-        case "path": return .path
-        case "size": return .size
-        case "mtime": return .mtime
-        case "kind": return .kind
-        default: return .name
-        }
-    }
 }
 
 private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {

@@ -183,7 +183,10 @@ final class AppModel: ObservableObject {
         usesRegularExpression = false
         let lim = d.integer(forKey: "pref.resultLimit")
         resultLimit = lim > 0 ? min(max(lim, 100), 10_000) : 5000
-        if let sk = d.string(forKey: "pref.sortKey") { sortKey = Self.sortKey(from: sk) }
+        if let name = d.string(forKey: "pref.sortKey"),
+           let persistedSortKey = QueryEngine.SortKey(rawValue: name) {
+            sortKey = persistedSortKey
+        }
         if d.object(forKey: "pref.ascending") != nil { ascending = d.bool(forKey: "pref.ascending") }
     }
 
@@ -194,29 +197,8 @@ final class AppModel: ObservableObject {
         d.set(wholeWord, forKey: "pref.wholeWord")
         d.set(usesRegularExpression, forKey: "pref.usesRegularExpression")
         d.set(resultLimit, forKey: "pref.resultLimit")
-        d.set(Self.sortKeyName(sortKey), forKey: "pref.sortKey")
+        d.set(sortKey.rawValue, forKey: "pref.sortKey")
         d.set(ascending, forKey: "pref.ascending")
-    }
-
-    // SortKey has no rawValue (the byte comparators don't need one); map it by hand
-    // for persistence.
-    static func sortKeyName(_ k: QueryEngine.SortKey) -> String {
-        switch k {
-        case .name:  return "name"
-        case .path:  return "path"
-        case .size:  return "size"
-        case .mtime: return "mtime"
-        case .kind:  return "kind"
-        }
-    }
-    static func sortKey(from s: String) -> QueryEngine.SortKey {
-        switch s {
-        case "path":  return .path
-        case "size":  return .size
-        case "mtime": return .mtime
-        case "kind":  return .kind
-        default:      return .name
-        }
     }
 
     // Force a full whole-disk rescan (File ▸ Rebuild Index). Same shape as applyRules

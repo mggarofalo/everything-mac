@@ -44,7 +44,7 @@ actor SearchClient {
         let request = SearchRequest(text: text, matchPath: matchPath,
                                     caseInsensitive: caseInsensitive, wholeWord: wholeWord,
                                     usesRegularExpression: usesRegularExpression,
-                                    sort: sortKeyName(sort), ascending: ascending,
+                                    sort: sort, ascending: ascending,
                                     limit: limit)
         return (try? await call(.search, payload: request, as: SearchResponse.self).records) ?? []
     }
@@ -70,16 +70,6 @@ actor SearchClient {
 
     private func status() async throws -> ServiceStatus {
         try await call(.status, payload: Optional<Bool>.none, as: ServiceStatus.self)
-    }
-
-    private func sortKeyName(_ key: QueryEngine.SortKey) -> String {
-        switch key {
-        case .name: return "name"
-        case .path: return "path"
-        case .size: return "size"
-        case .mtime: return "mtime"
-        case .kind: return "kind"
-        }
     }
 
     private func indexChanged() async {

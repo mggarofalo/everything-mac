@@ -1,25 +1,6 @@
 import Foundation
 
 public struct QueryEngine: Sendable {
-    private final class ChunkResults: @unchecked Sendable {
-        private let lock = NSLock()
-        private var values: [[UInt32]]
-
-        init(count: Int) { values = [[UInt32]](repeating: [], count: count) }
-
-        func set(_ value: [UInt32], at index: Int) {
-            lock.lock()
-            values[index] = value
-            lock.unlock()
-        }
-
-        func flattened() -> [UInt32] {
-            lock.lock()
-            defer { lock.unlock() }
-            return values.flatMap { $0 }
-        }
-    }
-
     public init() {}
 
     // Pre-classified term: ASCII bytes (fast path) or String fallback.
@@ -98,7 +79,7 @@ public struct QueryEngine: Sendable {
                                              componentIndex: componentIndex,
                                              isCancelled: isCancelled)
                 }
-                union = mergeSortedUnique(union, matches, isCancelled: isCancelled)
+                union = SortedRecordIDs.union(union, matches, isCancelled: isCancelled)
             }
             ids = union
         } else if let directory = plan.directories.first, directory.hasPrefix("/") {
@@ -289,43 +270,21 @@ public struct QueryEngine: Sendable {
             case .or(let expressions):
                 var result: [UInt32] = []
                 for alternative in expressions {
-                    result = mergeSortedUnique(result, evaluate(alternative),
-                                               isCancelled: isCancelled)
+                    result = SortedRecordIDs.union(result, evaluate(alternative),
+                                                   isCancelled: isCancelled)
                     if isCancelled() { return [] }
                 }
                 return result
             case .xor(let left, let right):
-                return symmetricDifference(evaluate(left), evaluate(right),
-                                           isCancelled: isCancelled)
+                return SortedRecordIDs.symmetricDifference(
+                    evaluate(left), evaluate(right), isCancelled: isCancelled
+                )
             case .not:
                 return scan(expression)
             }
         }
 
         return evaluate(expression)
-    }
-
-    private func symmetricDifference(_ left: [UInt32], _ right: [UInt32],
-                                     isCancelled: @Sendable () -> Bool) -> [UInt32] {
-        var result: [UInt32] = []
-        result.reserveCapacity(left.count + right.count)
-        var leftIndex = 0
-        var rightIndex = 0
-        while leftIndex < left.count || rightIndex < right.count {
-            if (leftIndex + rightIndex) & 0xFFF == 0, isCancelled() { return [] }
-            if rightIndex == right.count ||
-                (leftIndex < left.count && left[leftIndex] < right[rightIndex]) {
-                result.append(left[leftIndex])
-                leftIndex += 1
-            } else if leftIndex == left.count || right[rightIndex] < left[leftIndex] {
-                result.append(right[rightIndex])
-                rightIndex += 1
-            } else {
-                leftIndex += 1
-                rightIndex += 1
-            }
-        }
-        return result
     }
 
     private func filter(_ ids: [UInt32], byExtensions extensions: [[UInt8]],
@@ -337,30 +296,6 @@ public struct QueryEngine: Sendable {
             if offset & 0xFFF == 0, isCancelled() { return [] }
             if extensions.contains(where: { store.extensionMatches($0, of: id) }) {
                 result.append(id)
-            }
-        }
-        return result
-    }
-
-    private func mergeSortedUnique(_ left: [UInt32], _ right: [UInt32],
-                                   isCancelled: @Sendable () -> Bool) -> [UInt32] {
-        var result: [UInt32] = []
-        result.reserveCapacity(left.count + right.count)
-        var leftIndex = 0
-        var rightIndex = 0
-        while leftIndex < left.count || rightIndex < right.count {
-            if (leftIndex + rightIndex) & 0xFFF == 0, isCancelled() { return [] }
-            if rightIndex == right.count ||
-                (leftIndex < left.count && left[leftIndex] < right[rightIndex]) {
-                result.append(left[leftIndex])
-                leftIndex += 1
-            } else if leftIndex == left.count || right[rightIndex] < left[leftIndex] {
-                result.append(right[rightIndex])
-                rightIndex += 1
-            } else {
-                result.append(left[leftIndex])
-                leftIndex += 1
-                rightIndex += 1
             }
         }
         return result
@@ -564,7 +499,7 @@ public struct QueryEngine: Sendable {
         }
 
         let candidates: [UInt32]?
-        if let literal = Self.requiredLiteral(in: pattern), literal.utf8.count >= 3,
+        if let literal = RegexLiteralExtractor.requiredLiteral(in: pattern), literal.utf8.count >= 3,
            let indexed = componentIndex?.candidates(
                for: Query(text: literal, matchPath: query.matchPath,
                           caseInsensitive: query.caseInsensitive),
@@ -591,16 +526,16 @@ public struct QueryEngine: Sendable {
         }
         let chunks = max(2, ProcessInfo.processInfo.activeProcessorCount)
         let span = (store.count + chunks - 1) / chunks
-        let parts = ChunkResults(count: chunks)
+        let parts = ParallelSearchResults(chunkCount: chunks)
         DispatchQueue.concurrentPerform(iterations: chunks) { chunk in
             let lower = chunk * span
             let upper = min(store.count, lower + span)
             guard lower < upper else { return }
-            parts.set(regexScanRange(UInt32(lower), UInt32(upper), expression: expression,
-                                     query: query, in: store, isCancelled: isCancelled),
-                      at: chunk)
+            parts.store(regexScanRange(UInt32(lower), UInt32(upper), expression: expression,
+                                        query: query, in: store, isCancelled: isCancelled),
+                        forChunk: chunk)
         }
-        return parts.flattened()
+        return parts.joined()
     }
 
     private func regexScanRange(_ lower: UInt32, _ upper: UInt32,
@@ -624,99 +559,6 @@ public struct QueryEngine: Sendable {
         let text = query.matchPath ? store.path(of: id) : store.name(of: id)
         let range = NSRange(text.startIndex..<text.endIndex, in: text)
         return expression.firstMatch(in: text, options: [], range: range) != nil
-    }
-
-    /// Extract the longest top-level literal that every match must contain. This
-    /// recognizes common forms such as `.*handoff\.md$`; alternation and groups are
-    /// deliberately left to the exact fallback because choosing one branch as a
-    /// seed would create false negatives.
-    private static func requiredLiteral(in pattern: String) -> String? {
-        guard !hasUnescaped(pattern, anyOf: "|()") else { return nil }
-        let characters = Array(pattern)
-        var runs: [String] = []
-        var current = ""
-        var previousAtomWasLiteral = false
-        var index = 0
-
-        func finishRun() {
-            if !current.isEmpty { runs.append(current); current = "" }
-        }
-
-        while index < characters.count {
-            let character = characters[index]
-            if character == "\\" {
-                guard index + 1 < characters.count else { finishRun(); break }
-                let escaped = characters[index + 1]
-                // Escaped punctuation (for example `\.`) is literal. Escaped
-                // letters and digits may be ICU character classes, control
-                // escapes, Unicode/hex escapes, or backreferences, so treating
-                // them as mandatory text could incorrectly discard matches.
-                if escaped.isLetter || escaped.isNumber {
-                    return nil
-                } else {
-                    current.append(escaped)
-                    previousAtomWasLiteral = true
-                }
-                index += 2
-                continue
-            }
-            if character == "[" {
-                finishRun()
-                previousAtomWasLiteral = false
-                index += 1
-                var escaped = false
-                while index < characters.count {
-                    let next = characters[index]
-                    index += 1
-                    if escaped { escaped = false; continue }
-                    if next == "\\" { escaped = true; continue }
-                    if next == "]" { break }
-                }
-                continue
-            }
-            if character == "?" || character == "*" {
-                if previousAtomWasLiteral, !current.isEmpty { current.removeLast() }
-                finishRun()
-                previousAtomWasLiteral = false
-                index += 1
-                continue
-            }
-            if character == "{" {
-                let closing = characters[(index + 1)...].firstIndex(of: "}")
-                guard let closing else { finishRun(); break }
-                let quantifier = String(characters[(index + 1)..<closing])
-                let minimum = Int(quantifier.split(separator: ",", omittingEmptySubsequences: false).first ?? "") ?? 0
-                if minimum == 0, previousAtomWasLiteral, !current.isEmpty { current.removeLast() }
-                if minimum == 0 { finishRun() }
-                index = closing + 1
-                continue
-            }
-            if character == "." {
-                finishRun()
-                previousAtomWasLiteral = false
-            } else if character == "^" || character == "$" {
-                finishRun()
-                previousAtomWasLiteral = false
-            } else if character == "+" {
-                // One or more preserves the preceding atom as mandatory.
-            } else {
-                current.append(character)
-                previousAtomWasLiteral = true
-            }
-            index += 1
-        }
-        finishRun()
-        return runs.max { $0.utf8.count < $1.utf8.count }
-    }
-
-    private static func hasUnescaped(_ pattern: String, anyOf metacharacters: String) -> Bool {
-        var escaped = false
-        for character in pattern {
-            if escaped { escaped = false; continue }
-            if character == "\\" { escaped = true; continue }
-            if metacharacters.contains(character) { return true }
-        }
-        return false
     }
 
     // Every plain (non-wildcard) term must occur as a whole word in the candidate's
@@ -785,7 +627,7 @@ public struct QueryEngine: Sendable {
         // loop stays inlinable and ARC-free per id.
         let chunks = max(2, ProcessInfo.processInfo.activeProcessorCount)
         let span = (n + chunks - 1) / chunks
-        let parts = ChunkResults(count: chunks)
+        let parts = ParallelSearchResults(chunkCount: chunks)
         DispatchQueue.concurrentPerform(iterations: chunks) { c in
             let lo = c * span
             let hi = min(n, lo + span)
@@ -793,9 +635,9 @@ public struct QueryEngine: Sendable {
             let matches = self.scanRange(UInt32(lo), UInt32(hi), matchers: matchers,
                                          matchPath: matchPath, hasNonASCII: hasNonASCII, ci: ci,
                                          in: store, isCancelled: isCancelled)
-            parts.set(matches, at: c)
+            parts.store(matches, forChunk: c)
         }
-        return parts.flattened()
+        return parts.joined()
     }
 
     private func inheritedPathSearch(_ terms: [String], caseInsensitive: Bool,
@@ -903,78 +745,5 @@ public struct QueryEngine: Sendable {
             }
         }
         return out
-    }
-}
-
-public extension QueryEngine {
-    enum SortKey: Sendable { case name, path, size, mtime, kind }
-
-    // `a` ranks before `b` in ASCENDING order for the given key. Name uses the
-    // allocation-free byte comparator; path falls back to a String compare (rare,
-    // user-selected column). size/mtime are plain integer compares.
-    private func ascendingLess(_ key: SortKey, in store: FileStore) -> (UInt32, UInt32) -> Bool {
-        switch key {
-        case .name:  return { store.nameSortsBefore($0, $1) }
-        case .path:  return { store.path(of: $0).localizedStandardCompare(store.path(of: $1)) == .orderedAscending }
-        case .size:  return { store.size(of: $0) < store.size(of: $1) }
-        case .mtime: return { store.mtime(of: $0) < store.mtime(of: $1) }
-        case .kind:  return { store.kindSortsBefore($0, $1) }
-        }
-    }
-
-    func sort(_ ids: [UInt32], by key: SortKey, ascending: Bool, in store: FileStore) -> [UInt32] {
-        let asc = ascendingLess(key, in: store)
-        let less: (UInt32, UInt32) -> Bool = ascending ? asc : { asc($1, $0) }
-        return ids.sorted(by: less)
-    }
-
-    /// Return at most `limit` ids in sorted order without fully sorting `ids`.
-    /// Keeps the best `limit` via a bounded max-heap (worst-ranked on top), so the
-    /// cost is O(n · log limit) instead of O(n · log n). With millions of matches
-    /// for a short prefix, full-sorting every keystroke is what made typing lag;
-    /// since the UI only ever shows `limit` rows, the rest never needs ordering.
-    func sortedPrefix(_ ids: [UInt32], by key: SortKey, ascending: Bool,
-                      limit: Int, in store: FileStore,
-                      isCancelled: @Sendable () -> Bool = { false }) -> [UInt32] {
-        let asc = ascendingLess(key, in: store)
-        let earlier: (UInt32, UInt32) -> Bool = ascending ? asc : { asc($1, $0) }
-
-        if ids.count <= limit { return ids.sorted(by: earlier) }
-
-        // Max-heap keyed by "worse rank" — the element most likely to be evicted
-        // sits at the root. `worse(x, y)` is true when x ranks AFTER y.
-        func worse(_ x: UInt32, _ y: UInt32) -> Bool { earlier(y, x) }
-        var heap: [UInt32] = []
-        heap.reserveCapacity(limit)
-
-        func siftUp(_ start: Int) {
-            var i = start
-            while i > 0 {
-                let parent = (i - 1) / 2
-                if worse(heap[i], heap[parent]) { heap.swapAt(i, parent); i = parent } else { break }
-            }
-        }
-        func siftDown(_ start: Int) {
-            var i = start
-            let n = heap.count
-            while true {
-                let l = 2 * i + 1, r = 2 * i + 2
-                var m = i
-                if l < n && worse(heap[l], heap[m]) { m = l }
-                if r < n && worse(heap[r], heap[m]) { m = r }
-                if m == i { break }
-                heap.swapAt(i, m); i = m
-            }
-        }
-
-        for (offset, id) in ids.enumerated() {
-            if offset & 0xFFF == 0, isCancelled() { return [] }
-            if heap.count < limit {
-                heap.append(id); siftUp(heap.count - 1)
-            } else if earlier(id, heap[0]) {   // better than the worst kept → replace it
-                heap[0] = id; siftDown(0)
-            }
-        }
-        return heap.sorted(by: earlier)
     }
 }

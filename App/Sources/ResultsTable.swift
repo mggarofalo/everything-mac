@@ -176,7 +176,7 @@ struct ResultsTable: NSViewRepresentable {
 
         func tableView(_ t: NSTableView, sortDescriptorsDidChange old: [NSSortDescriptor]) {
             guard let d = t.sortDescriptors.first, let k = d.key else { return }
-            let key: QueryEngine.SortKey = ["name":.name,"path":.path,"size":.size,"kind":.kind,"mtime":.mtime][k] ?? .name
+            let key = QueryEngine.SortKey(rawValue: k) ?? .name
             parent.onSort(key, d.ascending)
         }
 

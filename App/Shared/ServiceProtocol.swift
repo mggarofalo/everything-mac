@@ -49,7 +49,7 @@ struct SearchRequest: Codable, Sendable {
     let caseInsensitive: Bool
     let wholeWord: Bool
     let usesRegularExpression: Bool
-    let sort: String
+    let sort: QueryEngine.SortKey
     let ascending: Bool
     let limit: Int
 }
