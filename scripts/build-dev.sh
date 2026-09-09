@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Build a local Release build of Everything-Mac, signed with a stable Apple
+# Build a local Release build of EverythingMac, signed with a stable Apple
 # Development identity so Full Disk Access persists across rebuilds.
 #
 # Why Release (not Debug): the search match-loop is ~100x slower unoptimized

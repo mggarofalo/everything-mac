@@ -155,12 +155,15 @@ private final class RemovalObserver: @unchecked Sendable {
             exit(EXIT_SUCCESS)
         }
 
-        do {
-            try FileManager.default.removeItem(at: ServicePaths.applicationSupportURL)
-        } catch {
-            if (error as NSError).code != NSFileNoSuchFileError {
-                NSLog("EverythingMac could not remove its index data: %@",
-                      error.localizedDescription)
+        for dataURL in [ServicePaths.applicationSupportURL,
+                        ServicePaths.legacyApplicationSupportURL] {
+            do {
+                try FileManager.default.removeItem(at: dataURL)
+            } catch {
+                if (error as NSError).code != NSFileNoSuchFileError {
+                    NSLog("EverythingMac could not remove its index data: %@",
+                          error.localizedDescription)
+                }
             }
         }
 

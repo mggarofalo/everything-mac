@@ -34,8 +34,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.app
         PRODUCT_NAME: EverythingMacIndexingService
-        MARKETING_VERSION: "0.9.0"
-        CURRENT_PROJECT_VERSION: "17"
+        MARKETING_VERSION: "0.9.1"
+        CURRENT_PROJECT_VERSION: "18"
         SKIP_INSTALL: YES
         SWIFT_VERSION: "6.0"
         CODE_SIGN_STYLE: Manual
@@ -106,8 +106,8 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.app
-        MARKETING_VERSION: "0.9.0"
-        CURRENT_PROJECT_VERSION: "17"
+        MARKETING_VERSION: "0.9.1"
+        CURRENT_PROJECT_VERSION: "18"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: EverythingMac.entitlements
         SWIFT_VERSION: "6.0"

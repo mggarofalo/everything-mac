@@ -35,7 +35,7 @@ The indexer checks access before loading or building the index. macOS enforces a
 EverythingMac stores its cache at:
 
 ```text
-~/Library/Application Support/Everything-Mac/index.idx
+~/Library/Application Support/EverythingMac/index.idx
 ```
 
 The application-support directory uses POSIX mode `0700`. The cache uses mode `0600`. These permissions prevent other local user accounts from reading the index through normal filesystem access.

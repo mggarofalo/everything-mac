@@ -54,7 +54,8 @@ final class ServiceProtocolTests: XCTestCase {
     }
 
     func testServicePathsUsePrivateApplicationSupportNamespace() {
-        XCTAssertEqual(ServicePaths.applicationSupportURL.lastPathComponent, "Everything-Mac")
+        XCTAssertEqual(ServicePaths.applicationSupportURL.lastPathComponent, "EverythingMac")
+        XCTAssertEqual(ServicePaths.legacyApplicationSupportURL.lastPathComponent, "Everything-Mac")
         XCTAssertEqual(ServicePaths.cacheURL().lastPathComponent, "index.idx")
         XCTAssertEqual(ServicePaths.cacheURL().deletingLastPathComponent(),
                        ServicePaths.applicationSupportURL)
@@ -66,6 +67,32 @@ final class ServiceProtocolTests: XCTestCase {
 }
 
 final class IndexActorBoundaryTests: XCTestCase {
+    func testLegacyApplicationSupportDirectoryMigrates() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let legacyURL = root.appendingPathComponent("Everything-Mac", isDirectory: true)
+        let currentURL = root.appendingPathComponent("EverythingMac", isDirectory: true)
+        let cacheURL = legacyURL.appendingPathComponent("index.idx")
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        try FileManager.default.createDirectory(at: legacyURL,
+                                                withIntermediateDirectories: true)
+        try Data("cache".utf8).write(to: cacheURL)
+
+        let preparedURL = IndexActor.prepareApplicationSupportDirectory(
+            currentURL: currentURL,
+            legacyURL: legacyURL
+        )
+
+        XCTAssertEqual(preparedURL, currentURL)
+        XCTAssertTrue(FileManager.default.fileExists(
+            atPath: currentURL.appendingPathComponent("index.idx").path
+        ))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyURL.path))
+        let attributes = try FileManager.default.attributesOfItem(atPath: currentURL.path)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+    }
+
     func testEmptyActorStatusAndSearch() async {
         let actor = IndexActor()
         let initialCount = await actor.totalCount

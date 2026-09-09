@@ -13,23 +13,6 @@ struct AppCommands: Commands {
         Binding(get: { model.sortKey },
                 set: { model.setSort($0, ascending: model.ascending) })
     }
-    private var matchPathBinding: Binding<Bool> {
-        Binding(get: { model.matchPath },
-                set: { model.matchPath = $0; model.searchOptionsChanged() })
-    }
-    private var caseSensitiveBinding: Binding<Bool> {
-        Binding(get: { model.caseSensitive },
-                set: { model.caseSensitive = $0; model.searchOptionsChanged() })
-    }
-    private var wholeWordBinding: Binding<Bool> {
-        Binding(get: { model.wholeWord },
-                set: { model.wholeWord = $0; model.searchOptionsChanged() })
-    }
-    private var regularExpressionBinding: Binding<Bool> {
-        Binding(get: { model.usesRegularExpression },
-                set: { model.usesRegularExpression = $0; model.searchOptionsChanged() })
-    }
-
     var body: some Commands {
         // FILE — act on the selected result, plus index/export actions.
         CommandGroup(after: .newItem) {
@@ -71,8 +54,8 @@ struct AppCommands: Commands {
                 .keyboardShortcut("f", modifiers: .command)
         }
 
-        // VIEW — sort order + path matching, mirroring the column headers and the
-        // search field's "Match path" switch so they stay in lockstep.
+        // VIEW — sorting mirrors the table's column headers. Search configuration
+        // lives only in the sliders menu beside the search field.
         CommandMenu("View") {
             Menu("Sort By") {
                 Picker("Sort By", selection: sortBinding) {
@@ -87,13 +70,6 @@ struct AppCommands: Commands {
             Button(model.ascending ? "Sort Descending" : "Sort Ascending") {
                 model.setSort(model.sortKey, ascending: !model.ascending)
             }
-            Divider()
-            Toggle("Match Path", isOn: matchPathBinding)
-                .keyboardShortcut("p", modifiers: [.command, .shift])
-            Toggle("Match Case", isOn: caseSensitiveBinding)
-            Toggle("Match Whole Word", isOn: wholeWordBinding)
-                .disabled(model.usesRegularExpression)
-            Toggle("Regular Expression", isOn: regularExpressionBinding)
         }
 
         // HELP — point at the project instead of the empty default Help menu.

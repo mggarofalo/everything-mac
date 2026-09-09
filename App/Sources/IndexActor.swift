@@ -68,14 +68,26 @@ actor IndexActor {
                       scanning: isRescanning, hasFullDiskAccess: hasFullDiskAccess)
     }
 
-    // ~/Library/Application Support/Everything-Mac/index.idx
+    // ~/Library/Application Support/EverythingMac/index.idx
     static func cacheURL() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-            .appendingPathComponent("Everything-Mac", isDirectory: true)
-        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o700],
-                                               ofItemAtPath: base.path)
-        return base.appendingPathComponent("index.idx")
+        prepareApplicationSupportDirectory()
+            .appendingPathComponent("index.idx")
+    }
+
+    @discardableResult
+    static func prepareApplicationSupportDirectory(
+        fileManager: FileManager = .default,
+        currentURL: URL = ServicePaths.applicationSupportURL,
+        legacyURL: URL = ServicePaths.legacyApplicationSupportURL
+    ) -> URL {
+        if !fileManager.fileExists(atPath: currentURL.path),
+           fileManager.fileExists(atPath: legacyURL.path) {
+            try? fileManager.moveItem(at: legacyURL, to: currentURL)
+        }
+        try? fileManager.createDirectory(at: currentURL, withIntermediateDirectories: true)
+        try? fileManager.setAttributes([.posixPermissions: 0o700],
+                                       ofItemAtPath: currentURL.path)
+        return currentURL
     }
 
     func search(_ text: String, matchPath: Bool, caseInsensitive: Bool = true, wholeWord: Bool = false,

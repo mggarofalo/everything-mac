@@ -9,7 +9,7 @@ set -euo pipefail
 pkill -x EverythingMac 2>/dev/null || true
 sleep 1
 
-CACHE="$HOME/Library/Application Support/Everything-Mac/index.idx"
+CACHE="$HOME/Library/Application Support/EverythingMac/index.idx"
 : > "$CACHE" 2>/dev/null || true   # truncate (not rm) → load fails → full rescan
 
 launchctl kickstart -k "gui/$(id -u)/com.everythingmac.indexer" 2>/dev/null || true

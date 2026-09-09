@@ -62,6 +62,13 @@ struct SearchResponse: Codable, Sendable {
 enum ServicePaths {
     static var applicationSupportURL: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("EverythingMac", isDirectory: true)
+    }
+
+    /// The storage namespace used through 0.9.0. Keep this solely for migrating
+    /// existing indexes and removing legacy data during uninstall.
+    static var legacyApplicationSupportURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Everything-Mac", isDirectory: true)
     }
 
