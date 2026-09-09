@@ -1,21 +1,13 @@
 import SwiftUI
 import IndexCore
 
-// Live search defaults — these bind AppModel directly and re-run the current query
-// the moment they change (no Apply / re-index needed). They share the exact same
-// state the View-menu toggles and column headers drive, so everything stays in sync.
+// Result-display defaults apply immediately; no re-index is required.
+// Match options live beside the search field, where their effect is visible.
 struct SearchSettingsView: View {
     @EnvironmentObject var model: AppModel
 
     var body: some View {
         Form {
-            Section("Match options") {
-                Toggle("Match case", isOn: caseBinding)
-                Toggle("Match whole word", isOn: wholeBinding)
-                    .disabled(model.usesRegularExpression)
-                Toggle("Search full path (not just the name)", isOn: matchPathBinding)
-                Toggle("Regular expression", isOn: regularExpressionBinding)
-            }
             Section("Results") {
                 Picker("Sort by", selection: sortBinding) {
                     Text("Name").tag(QueryEngine.SortKey.name)
@@ -37,19 +29,6 @@ struct SearchSettingsView: View {
         .padding(20)
     }
 
-    private var caseBinding: Binding<Bool> {
-        Binding(get: { model.caseSensitive }, set: { model.caseSensitive = $0; model.searchOptionsChanged() })
-    }
-    private var wholeBinding: Binding<Bool> {
-        Binding(get: { model.wholeWord }, set: { model.wholeWord = $0; model.searchOptionsChanged() })
-    }
-    private var matchPathBinding: Binding<Bool> {
-        Binding(get: { model.matchPath }, set: { model.matchPath = $0; model.searchOptionsChanged() })
-    }
-    private var regularExpressionBinding: Binding<Bool> {
-        Binding(get: { model.usesRegularExpression },
-                set: { model.usesRegularExpression = $0; model.searchOptionsChanged() })
-    }
     private var sortBinding: Binding<QueryEngine.SortKey> {
         Binding(get: { model.sortKey }, set: { model.setSort($0, ascending: model.ascending) })
     }
