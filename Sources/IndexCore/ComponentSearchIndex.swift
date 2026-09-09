@@ -207,58 +207,89 @@ public struct ComponentSearchIndex: Sendable {
         let terms = query.matchPath
             ? query.terms.map { $0.replacingOccurrences(of: "\\", with: "/") }
             : query.terms
+        switch candidateSeed(for: terms, matchPath: query.matchPath) {
+        case .unsupported:
+            return nil
+        case .noMatches:
+            return []
+        case .found(let term, let key, let count):
+            let seedIDs = decodedPosting(for: key)
+            if query.matchPath {
+                return pathCandidates(seedIDs, seedTerm: term, terms: terms,
+                                      caseInsensitive: query.caseInsensitive,
+                                      in: store, isCancelled: isCancelled)
+            }
+            return nameCandidates(seedIDs, expectedCount: count, terms: terms,
+                                  caseInsensitive: query.caseInsensitive,
+                                  in: store, isCancelled: isCancelled)
+        }
+    }
 
+    private enum CandidateSeed {
+        case unsupported
+        case noMatches
+        case found(term: [UInt8], key: UInt32, count: Int)
+    }
+
+    private func candidateSeed(for terms: [String], matchPath: Bool) -> CandidateSeed {
         var seed: (term: [UInt8], key: UInt32, count: Int)?
         for term in terms {
-            let fragments = query.matchPath
+            let fragments = matchPath
                 ? term.split(separator: "/", omittingEmptySubsequences: true).map(String.init)
                 : [term]
             for fragment in fragments {
                 guard let bytes = Glob.asciiLowerBytes(fragment), bytes.count >= 3 else { continue }
                 for key in Self.trigrams(in: bytes) {
                     let count = postingCount(for: key)
-                    guard count > 0 else { return [] }
+                    guard count > 0 else { return .noMatches }
                     if seed == nil || count < seed!.count { seed = (bytes, key, count) }
                 }
             }
         }
-        guard let seed else { return nil }
-        let seedIDs = decodedPosting(for: seed.key)
+        guard let seed else { return .unsupported }
+        return .found(term: seed.term, key: seed.key, count: seed.count)
+    }
 
-        if !query.matchPath {
-            var result: [UInt32] = []
-            result.reserveCapacity(min(seed.count, 16_384))
-            let matchers = query.caseInsensitive ? terms.compactMap(Glob.asciiLowerBytes) : []
-            if query.caseInsensitive, matchers.count != terms.count { return nil }
-            for (offset, id) in seedIDs.enumerated() {
-                if offset & 0xFFF == 0, isCancelled() { return [] }
-                guard store.isLive(id) else { continue }
-                let matches = query.caseInsensitive
-                    ? matchers.allSatisfy {
-                        Glob.matchesASCII(patternLowerBytes: $0,
-                                          in: store.nameBytesSlice(of: id))
-                    }
-                    : terms.allSatisfy {
-                        Glob.matches(pattern: $0, in: store.name(of: id), caseInsensitive: false)
-                    }
-                if matches {
-                    result.append(id)
+    private func nameCandidates(_ seedIDs: [UInt32], expectedCount: Int,
+                                terms: [String], caseInsensitive: Bool,
+                                in store: FileStore,
+                                isCancelled: @Sendable () -> Bool) -> [UInt32]? {
+        let matchers = caseInsensitive ? terms.compactMap(Glob.asciiLowerBytes) : []
+        if caseInsensitive, matchers.count != terms.count { return nil }
+        var result: [UInt32] = []
+        result.reserveCapacity(min(expectedCount, 16_384))
+        for (offset, id) in seedIDs.enumerated() {
+            if offset & 0xFFF == 0, isCancelled() { return [] }
+            guard store.isLive(id) else { continue }
+            let matches = caseInsensitive
+                ? matchers.allSatisfy {
+                    Glob.matchesASCII(patternLowerBytes: $0, in: store.nameBytesSlice(of: id))
                 }
+                : terms.allSatisfy {
+                    Glob.matches(pattern: $0, in: store.name(of: id), caseInsensitive: false)
+                }
+            if matches {
+                result.append(id)
             }
-            return result
         }
+        return result
+    }
 
+    private func pathCandidates(_ seedIDs: [UInt32], seedTerm: [UInt8],
+                                terms: [String], caseInsensitive: Bool,
+                                in store: FileStore,
+                                isCancelled: @Sendable () -> Bool) -> [UInt32] {
         var visited = Set<UInt32>()
         var result: [UInt32] = []
         for (offset, componentID) in seedIDs.enumerated() {
             if offset & 0x3FF == 0, isCancelled() { return [] }
             guard store.isLive(componentID),
-                  Glob.matchesASCII(patternLowerBytes: seed.term,
+                  Glob.matchesASCII(patternLowerBytes: seedTerm,
                                     in: store.nameBytesSlice(of: componentID)) else { continue }
             var stack = [componentID]
             while let id = stack.popLast() {
                 if visited.insert(id).inserted {
-                    if store.isLive(id), Self.pathMatches(terms, caseInsensitive: query.caseInsensitive,
+                    if store.isLive(id), Self.pathMatches(terms, caseInsensitive: caseInsensitive,
                                                           id: id, in: store) {
                         result.append(id)
                     }

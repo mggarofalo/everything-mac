@@ -114,23 +114,31 @@ enum StructuredQueryParser {
             case .predicate:
                 return expression
             case .and(let expressions):
-                let children = expressions.compactMap { removingDirectives(from: $0) }
-                if children.isEmpty { return nil }
-                return children.count == 1 ? children[0] : .and(children)
+                return filteredGroup(expressions, joinedBy: Query.FilterExpression.and)
             case .or(let expressions):
-                let children = expressions.compactMap { removingDirectives(from: $0) }
-                if children.isEmpty { return nil }
-                return children.count == 1 ? children[0] : .or(children)
+                return filteredGroup(expressions, joinedBy: Query.FilterExpression.or)
             case .xor(let left, let right):
-                let filteredLeft = removingDirectives(from: left)
-                let filteredRight = removingDirectives(from: right)
-                switch (filteredLeft, filteredRight) {
-                case let (.some(left), .some(right)): return .xor(left, right)
-                case let (.some(expression), nil), let (nil, .some(expression)): return expression
-                case (nil, nil): return nil
-                }
+                return filteredXor(left, right)
             case .not(let child):
                 return removingDirectives(from: child).map(Query.FilterExpression.not)
+            }
+        }
+
+        private func filteredGroup(
+            _ expressions: [Query.FilterExpression],
+            joinedBy join: ([Query.FilterExpression]) -> Query.FilterExpression
+        ) -> Query.FilterExpression? {
+            let children = expressions.compactMap { removingDirectives(from: $0) }
+            guard !children.isEmpty else { return nil }
+            return children.count == 1 ? children[0] : join(children)
+        }
+
+        private func filteredXor(_ left: Query.FilterExpression,
+                                 _ right: Query.FilterExpression) -> Query.FilterExpression? {
+            switch (removingDirectives(from: left), removingDirectives(from: right)) {
+            case let (.some(left), .some(right)): return .xor(left, right)
+            case let (.some(expression), nil), let (nil, .some(expression)): return expression
+            case (nil, nil): return nil
             }
         }
 
@@ -234,60 +242,92 @@ enum StructuredQueryParser {
                 invalidate("\(name): needs a value.")
                 return .predicate(.all)
             }
+            return filterPredicate(named: name, value: value, originalWord: word)
+        }
 
+        private mutating func filterPredicate(named name: String, value: String,
+                                              originalWord: String) -> Query.FilterExpression {
             switch name {
-            case "name":
-                return .predicate(.text(value))
-            case "path":
-                return .predicate(.path(value))
-            case "in":
-                guard let path = QueryValueParser.absolutePath(value) else {
-                    invalidate("in: expects an absolute path or one beginning with ~.")
-                    return .predicate(.all)
-                }
-                return .predicate(.directory(path))
-            case "filetype", "ext":
-                guard let extensions = QueryValueParser.fileTypes(value) else {
-                    invalidate("filetype: expects comma-separated extensions, such as md,docx.")
-                    return .predicate(.all)
-                }
-                return .predicate(.fileTypes(extensions))
-            case "regex", "rx":
-                do {
-                    _ = try NSRegularExpression(pattern: value)
-                    return .predicate(.regularExpression(value))
-                } catch {
-                    invalidate("Invalid regular expression: \(error.localizedDescription)")
-                    return .predicate(.all)
-                }
-            case "type":
-                guard let kind = QueryValueParser.fileKind(value) else {
-                    invalidate("type: expects file or folder.")
-                    return .predicate(.all)
-                }
-                return .predicate(.kind(kind))
-            case "size":
-                guard let constraint = QueryValueParser.size(value) else {
-                    invalidate("size: expects bytes such as >100mb or 1mb..1gb.")
-                    return .predicate(.all)
-                }
-                return .predicate(.size(constraint))
-            case "modified":
-                guard let constraint = QueryValueParser.modified(value) else {
-                    invalidate("modified: expects today, Nd, DATE, or DATE..DATE.")
-                    return .predicate(.all)
-                }
-                return .predicate(.modified(constraint))
-            case "limit":
-                guard let limit = QueryValueParser.limit(value) else {
-                    invalidate("limit: expects a positive number.")
-                    return .predicate(.all)
-                }
-                plan.limit = limit
-                return .predicate(.all)
+            case "name": return .predicate(.text(value))
+            case "path": return .predicate(.path(value))
+            case "in": return directoryPredicate(value)
+            case "filetype", "ext": return fileTypePredicate(value)
+            case "regex", "rx": return regularExpressionPredicate(value)
+            case "type", "size", "modified", "limit":
+                return constraintPredicate(named: name, value: value)
             default:
-                return .predicate(.text(word))
+                return .predicate(.text(originalWord))
             }
+        }
+
+        private mutating func directoryPredicate(_ value: String) -> Query.FilterExpression {
+            guard let path = QueryValueParser.absolutePath(value) else {
+                invalidate("in: expects an absolute path or one beginning with ~.")
+                return .predicate(.all)
+            }
+            return .predicate(.directory(path))
+        }
+
+        private mutating func fileTypePredicate(_ value: String) -> Query.FilterExpression {
+            guard let extensions = QueryValueParser.fileTypes(value) else {
+                invalidate("filetype: expects comma-separated extensions, such as md,docx.")
+                return .predicate(.all)
+            }
+            return .predicate(.fileTypes(extensions))
+        }
+
+        private mutating func regularExpressionPredicate(_ value: String) -> Query.FilterExpression {
+            do {
+                _ = try NSRegularExpression(pattern: value)
+                return .predicate(.regularExpression(value))
+            } catch {
+                invalidate("Invalid regular expression: \(error.localizedDescription)")
+                return .predicate(.all)
+            }
+        }
+
+        private mutating func constraintPredicate(named name: String,
+                                                  value: String) -> Query.FilterExpression {
+            switch name {
+            case "type": return kindPredicate(value)
+            case "size": return sizePredicate(value)
+            case "modified": return modifiedPredicate(value)
+            case "limit": return limitDirective(value)
+            default: return .predicate(.all)
+            }
+        }
+
+        private mutating func kindPredicate(_ value: String) -> Query.FilterExpression {
+            guard let kind = QueryValueParser.fileKind(value) else {
+                invalidate("type: expects file or folder.")
+                return .predicate(.all)
+            }
+            return .predicate(.kind(kind))
+        }
+
+        private mutating func sizePredicate(_ value: String) -> Query.FilterExpression {
+            guard let constraint = QueryValueParser.size(value) else {
+                invalidate("size: expects bytes such as >100mb or 1mb..1gb.")
+                return .predicate(.all)
+            }
+            return .predicate(.size(constraint))
+        }
+
+        private mutating func modifiedPredicate(_ value: String) -> Query.FilterExpression {
+            guard let constraint = QueryValueParser.modified(value) else {
+                invalidate("modified: expects today, Nd, DATE, or DATE..DATE.")
+                return .predicate(.all)
+            }
+            return .predicate(.modified(constraint))
+        }
+
+        private mutating func limitDirective(_ value: String) -> Query.FilterExpression {
+            guard let limit = QueryValueParser.limit(value) else {
+                invalidate("limit: expects a positive number.")
+                return .predicate(.all)
+            }
+            plan.limit = limit
+            return .predicate(.all)
         }
 
         func beginsExpression(_ token: Token) -> Bool {

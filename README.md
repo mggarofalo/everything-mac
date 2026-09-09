@@ -15,7 +15,7 @@ Open the release DMG and drag `EverythingMac.app` into Applications. Launch the 
 The indexing service needs Full Disk Access. The UI and search service do not. Add this executable in `System Settings > Privacy & Security > Full Disk Access`:
 
 ```text
-/Applications/EverythingMac.app/Contents/MacOS/EverythingMacIndexer
+/Applications/EverythingMac.app/Contents/MacOS/EverythingMacIndexingService
 ```
 
 EverythingMac shows a loading panel while the services start. The status bar reports progress once the first scan begins. Later launches load the saved index and replay filesystem changes.
@@ -72,10 +72,11 @@ Move `EverythingMac.app` out of Applications or into the Trash. Its removal obse
 
 ## Build from source
 
-Development requires macOS 14 or newer, Xcode 16 or newer, XcodeGen, and an Apple Development signing identity.
+Development requires macOS 14 or newer, Xcode 16 or newer, XcodeGen, SwiftLint,
+and an Apple Development signing identity.
 
 ```bash
-brew install xcodegen
+brew install xcodegen swiftlint
 git clone https://github.com/mggarofalo/everything-mac.git
 cd everything-mac
 ./scripts/build-dev.sh
@@ -97,6 +98,16 @@ Run the core test suite with:
 ```bash
 swift test
 ```
+
+Run the enforced complexity and coverage audit with:
+
+```bash
+./scripts/check-quality.sh
+```
+
+The quality gate runs the core and indexing-service boundary suites, caps
+cyclomatic complexity at 10, requires 95% aggregate core line coverage, and
+requires at least 85% line coverage in every core source file.
 
 ## Package a release
 
@@ -123,7 +134,7 @@ EverythingMac has 3 executable components:
 | --- | --- |
 | `EverythingMac.app` | Displays the interface and performs user-requested file actions |
 | `EverythingMacSearchService` | Provides the UI-facing XPC endpoint |
-| `EverythingMacIndexer` | Scans metadata, owns the index, processes queries, and watches filesystem changes |
+| `EverythingMacIndexingService` | Scans metadata, owns the index, processes queries, and watches filesystem changes |
 
 The `IndexCore` Swift package contains the storage, parser, search, sorting, scanning, and FSEvents code shared by the executables.
 

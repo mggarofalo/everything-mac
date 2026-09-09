@@ -29,7 +29,7 @@ app_dir="$repo_dir/App"
 build_dir="$app_dir/build"
 dist_dir="$repo_dir/dist"
 app="$build_dir/Build/Products/Release/EverythingMac.app"
-indexer="$app/Contents/MacOS/EverythingMacIndexer"
+indexing_service="$app/Contents/MacOS/EverythingMacIndexingService"
 search_service="$app/Contents/MacOS/EverythingMacSearchService"
 
 if [[ "$mode" == "preview" ]]; then
@@ -69,21 +69,21 @@ xcodebuild -project EverythingMac.xcodeproj -scheme EverythingMac \
   CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
   ENABLE_HARDENED_RUNTIME=YES
 
-[[ -x "$indexer" && -x "$search_service" ]] || {
+[[ -x "$indexing_service" && -x "$search_service" ]] || {
   echo "The built app is missing one or more background services." >&2
   exit 1
 }
 
 # Sign inside out. The explicit identifiers are part of the XPC trust policy.
 codesign --force --options runtime "${timestamp_option[@]}" \
-  --identifier com.everythingmac.app --sign "$sign_identity" "$indexer"
+  --identifier com.everythingmac.app --sign "$sign_identity" "$indexing_service"
 codesign --force --options runtime "${timestamp_option[@]}" \
   --identifier EverythingMacSearchService --sign "$sign_identity" "$search_service"
 codesign --force --options runtime "${timestamp_option[@]}" \
   --entitlements "$app_dir/EverythingMac.entitlements" \
   --identifier com.everythingmac.app --sign "$sign_identity" "$app"
 
-codesign --verify --strict --verbose=2 "$indexer"
+codesign --verify --strict --verbose=2 "$indexing_service"
 codesign --verify --strict --verbose=2 "$search_service"
 codesign --verify --strict --verbose=2 "$app"
 

@@ -7,12 +7,25 @@ packages:
   IndexCore:
     path: ..
 targets:
-  EverythingMacIndexer:
+  EverythingMacServiceTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Shared/ServiceProtocol.swift
+      - Sources/IndexActor.swift
+      - Tests/ServiceTests
+    dependencies:
+      - package: IndexCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.service-tests
+        GENERATE_INFOPLIST_FILE: YES
+  EverythingMacIndexingService:
     type: tool
     platform: macOS
     sources:
       - Shared
-      - ServiceSources/Indexer
+      - ServiceSources/Indexing
       - Sources/IndexActor.swift
       - Sources/FullDiskAccess.swift
     dependencies:
@@ -20,9 +33,9 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.app
-        PRODUCT_NAME: EverythingMacIndexer
-        MARKETING_VERSION: "0.8.0"
-        CURRENT_PROJECT_VERSION: "16"
+        PRODUCT_NAME: EverythingMacIndexingService
+        MARKETING_VERSION: "0.9.0"
+        CURRENT_PROJECT_VERSION: "17"
         SKIP_INSTALL: YES
         SWIFT_VERSION: "6.0"
         CODE_SIGN_STYLE: Manual
@@ -62,19 +75,19 @@ targets:
       path: EverythingMac.entitlements
     dependencies:
       - package: IndexCore
-      - target: EverythingMacIndexer
+      - target: EverythingMacIndexingService
         embed: false
       - target: EverythingMacSearchService
         embed: false
     postBuildScripts:
       - name: Embed Background Services
         inputFiles:
-          - "$(BUILT_PRODUCTS_DIR)/EverythingMacIndexer"
+          - "$(BUILT_PRODUCTS_DIR)/EverythingMacIndexingService"
           - "$(BUILT_PRODUCTS_DIR)/EverythingMacSearchService"
           - "$(SRCROOT)/LaunchAgents/com.everythingmac.indexer.plist"
           - "$(SRCROOT)/LaunchAgents/com.everythingmac.search.plist"
         outputFiles:
-          - "$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/MacOS/EverythingMacIndexer"
+          - "$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/MacOS/EverythingMacIndexingService"
           - "$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/MacOS/EverythingMacSearchService"
           - "$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library/LaunchAgents/com.everythingmac.indexer.plist"
           - "$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library/LaunchAgents/com.everythingmac.search.plist"
@@ -83,18 +96,18 @@ targets:
           executable_dir="${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/MacOS"
           agent_dir="${TARGET_BUILD_DIR}/${WRAPPER_NAME}/Contents/Library/LaunchAgents"
           mkdir -p "${agent_dir}"
-          ditto "${BUILT_PRODUCTS_DIR}/EverythingMacIndexer" "${executable_dir}/EverythingMacIndexer"
+          ditto "${BUILT_PRODUCTS_DIR}/EverythingMacIndexingService" "${executable_dir}/EverythingMacIndexingService"
           ditto "${BUILT_PRODUCTS_DIR}/EverythingMacSearchService" "${executable_dir}/EverythingMacSearchService"
           if [[ "${CODE_SIGNING_ALLOWED:-YES}" != "NO" && -n "${EXPANDED_CODE_SIGN_IDENTITY:-}" ]]; then
-            /usr/bin/codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY}" --identifier com.everythingmac.app --options runtime "${executable_dir}/EverythingMacIndexer"
+            /usr/bin/codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY}" --identifier com.everythingmac.app --options runtime "${executable_dir}/EverythingMacIndexingService"
           fi
           ditto "${SRCROOT}/LaunchAgents/com.everythingmac.indexer.plist" "${agent_dir}/com.everythingmac.indexer.plist"
           ditto "${SRCROOT}/LaunchAgents/com.everythingmac.search.plist" "${agent_dir}/com.everythingmac.search.plist"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.app
-        MARKETING_VERSION: "0.8.0"
-        CURRENT_PROJECT_VERSION: "16"
+        MARKETING_VERSION: "0.9.0"
+        CURRENT_PROJECT_VERSION: "17"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: EverythingMac.entitlements
         SWIFT_VERSION: "6.0"

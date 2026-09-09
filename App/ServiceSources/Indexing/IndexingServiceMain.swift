@@ -167,7 +167,7 @@ private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
 }
 
 @main
-enum EverythingMacIndexer {
+enum EverythingMacIndexingService {
     static func main() {
         if ApplicationBundleMonitor.runObserverIfRequested() { return }
         ApplicationBundleMonitor.launchObserver()

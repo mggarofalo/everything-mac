@@ -51,6 +51,16 @@ actor IndexActor {
         }
     }
 
+    /// Deterministic construction for service tests and scoped embedding. It avoids
+    /// reading preferences or starting system services; callers explicitly supply the
+    /// index snapshot and whether live reconciliation is allowed.
+    init(store: FileStore, rules: ExcludeRules, accessEnabled: Bool) {
+        self.store = store
+        self.rules = rules
+        self.liveRules = rules
+        self.accessEnabled = accessEnabled
+    }
+
     var totalCount: Int { store.liveCount }
 
     func serviceStatus(hasFullDiskAccess: Bool) -> ServiceStatus {
@@ -71,7 +81,7 @@ actor IndexActor {
     func search(_ text: String, matchPath: Bool, caseInsensitive: Bool = true, wholeWord: Bool = false,
                 usesRegularExpression: Bool = false,
                 sort: QueryEngine.SortKey, ascending: Bool, limit: Int = 5000,
-                isCancelled: @Sendable () -> Bool = { false }) async -> [FileRecord] {
+                isCancelled: @escaping @Sendable () -> Bool = { false }) async -> [FileRecord] {
         // Re-scan only when the query (not the sort) changed. The key folds in every
         // flag that changes which ids match — matchPath, case sensitivity, whole-word,
         // and regular-expression mode —
@@ -413,109 +423,146 @@ actor IndexActor {
         guard !draining else { return }
         draining = true
         defer { draining = false }
-        var processed = 0
-        // Carries across the whole drain so a subtree one event just fully indexed isn't
-        // re-listed by a sibling or descendant event in the same pass.
-        var newlyIndexed = Set<String>()
+        var state = DrainState()
         // Loop until the backlog is empty so changes that arrive mid-drain aren't lost.
         while !pendingDirs.isEmpty || !pendingMetadata.isEmpty || pendingFullRescan {
-            if pendingFullRescan {
-                pendingFullRescan = false
+            if await performPendingFullRescan() { return }
+            let batch = takePendingBatch()
+            processMetadata(batch.metadata, state: &state)
+            if await processDirectories(batch.directories, deep: batch.deep,
+                                        state: &state) { return }
+            publishChanges(from: state)
+            if scheduleRetryIfNeeded(eventID: batch.eventID, state: state) { return }
+            lastEventID = max(lastEventID, batch.eventID)
+            state.resetForNextBatch()
+        }
+    }
+
+    private struct DrainBatch {
+        let directories: [String]
+        let deep: Set<String>
+        let metadata: Set<String>
+        let eventID: UInt64
+    }
+
+    private struct DrainState {
+        var processed = 0
+        var newlyIndexed = Set<String>()
+        var structuralChanged = false
+        var visibleMetadataChanged = false
+        var retryNeeded = false
+        var retryDelay: UInt64 = 1_000_000_000
+
+        mutating func resetForNextBatch() {
+            structuralChanged = false
+            visibleMetadataChanged = false
+            retryNeeded = false
+            retryDelay = 1_000_000_000
+        }
+    }
+
+    private func performPendingFullRescan() async -> Bool {
+        guard pendingFullRescan else { return false }
+        pendingFullRescan = false
+        await rescanAll()
+        onLiveChange?()
+        return true
+    }
+
+    private func takePendingBatch() -> DrainBatch {
+        let batch = DrainBatch(directories: pendingDirs.sorted(), deep: pendingDeep,
+                               metadata: pendingMetadata, eventID: pendingMaxEventID)
+        pendingDirs.removeAll(keepingCapacity: true)
+        pendingDeep.removeAll(keepingCapacity: true)
+        pendingMetadata.removeAll(keepingCapacity: true)
+        pendingMaxEventID = 0
+        return batch
+    }
+
+    private func processMetadata(_ paths: Set<String>, state: inout DrainState) {
+        for path in paths {
+            switch LiveMonitor.refreshMetadataStatus(path: path, in: &store) {
+            case .changed:
+                retryCounts.removeValue(forKey: "m:" + path)
+                if lastSort == .size || lastSort == .mtime || visibleResultPaths.contains(path) {
+                    state.visibleMetadataChanged = true
+                }
+            case .retry:
+                recordRetry(for: "m:" + path, state: &state)
+                pendingMetadata.insert(path)
+            case .noChange:
+                retryCounts.removeValue(forKey: "m:" + path)
+            }
+        }
+    }
+
+    private func processDirectories(_ directories: [String], deep: Set<String>,
+                                    state: inout DrainState) async -> Bool {
+        for directory in directories {
+            let descend = deep.contains(directory)
+            if descend, Self.isVolumeRoot(directory) {
                 await rescanAll()
                 onLiveChange?()
-                return
+                return true
             }
-            let dirs = pendingDirs.sorted()          // ancestors first
-            let deep = pendingDeep
-            let metadata = pendingMetadata
-            let processedEventID = pendingMaxEventID
-            pendingDirs.removeAll(keepingCapacity: true)
-            pendingDeep.removeAll(keepingCapacity: true)
-            pendingMetadata.removeAll(keepingCapacity: true)
-            pendingMaxEventID = 0
-            var structuralChanged = false
-            var visibleMetadataChanged = false
-            var retryNeeded = false
-            var retryDelay: UInt64 = 1_000_000_000
-            for path in metadata {
-                switch LiveMonitor.refreshMetadataStatus(path: path, in: &store) {
-                case .changed:
-                    retryCounts.removeValue(forKey: "m:" + path)
-                    if lastSort == .size || lastSort == .mtime || visibleResultPaths.contains(path) {
-                        visibleMetadataChanged = true
-                    }
-                case .retry:
-                    let key = "m:" + path
-                    let attempts = retryCounts[key, default: 0] + 1
-                    retryCounts[key] = attempts
-                    pendingMetadata.insert(path)
-                    retryNeeded = true
-                    retryDelay = max(retryDelay, Self.retryDelay(for: attempts))
-                case .noChange:
-                    retryCounts.removeValue(forKey: "m:" + path)
-                }
+            var stack = [directory]
+            while let path = stack.popLast() {
+                let result = LiveMonitor.reconcileLevelStatus(
+                    directory: path, in: &store, rules: liveRules, volID: 1,
+                    descend: descend, newlyIndexedDirs: &state.newlyIndexed,
+                    pushChildDirsTo: &stack
+                )
+                applyDirectoryResult(result, path: path, descend: descend, state: &state)
+                state.processed += 1
+                // Yield periodically so search and sort requests stay responsive.
+                if state.processed % 64 == 0 { await Task.yield() }
             }
-            for d in dirs {
-                // A MustScanSubDirs (deep) event resyncs the whole live subtree under `d`;
-                // a normal event resyncs just `d`. The descent is ITERATIVE — an explicit
-                // stack with an `await` between levels — never a synchronous recursion,
-                // which walked the whole subtree in one uninterruptible call and froze the
-                // actor (search shares it). A volume-root deep event means FSEvents
-                // lost information about the whole monitored tree, so rebuild from a
-                // checkpoint instead of leaving deeper entries stale.
-                if deep.contains(d), Self.isVolumeRoot(d) {
-                    await rescanAll()
-                    onLiveChange?()
-                    return
-                }
-                let descend = deep.contains(d)
-                var stack = [d]
-                while let dir = stack.popLast() {
-                    switch LiveMonitor.reconcileLevelStatus(
-                        directory: dir, in: &store, rules: liveRules, volID: 1,
-                        descend: descend, newlyIndexedDirs: &newlyIndexed,
-                        pushChildDirsTo: &stack
-                    ) {
-                    case .changed:
-                        retryCounts.removeValue(forKey: "d:" + dir)
-                        structuralChanged = true
-                    case .retry:
-                        // Some safe additions/metadata may already have been applied
-                        // before an incomplete directory snapshot was detected.
-                        structuralChanged = true
-                        let key = "d:" + dir
-                        let attempts = retryCounts[key, default: 0] + 1
-                        retryCounts[key] = attempts
-                        pendingDirs.insert(dir)
-                        if descend { pendingDeep.insert(dir) }
-                        retryNeeded = true
-                        retryDelay = max(retryDelay, Self.retryDelay(for: attempts))
-                    case .noChange:
-                        retryCounts.removeValue(forKey: "d:" + dir)
-                    }
-                    processed += 1
-                    // Suspend periodically so a queued search/sort runs instead of waiting
-                    // for the whole drain — this is what keeps the UI responsive under churn.
-                    if processed % 64 == 0 { await Task.yield() }
-                }
-            }
-            if structuralChanged {
-                cachedQueryKey = nil
-            }
-            if structuralChanged || visibleMetadataChanged { revision &+= 1 }
-            if structuralChanged || visibleMetadataChanged { onLiveChange?() }
-            if retryNeeded {
-                pendingMaxEventID = max(pendingMaxEventID, processedEventID)
-                drainScheduled = true
-                Task { [weak self] in
-                    try? await Task.sleep(nanoseconds: retryDelay)
-                    guard !Task.isCancelled else { return }
-                    await self?.drainChanges()
-                }
-                return
-            }
-            lastEventID = max(lastEventID, processedEventID)
         }
+        return false
+    }
+
+    private func applyDirectoryResult(_ result: LiveMonitor.InspectionResult, path: String,
+                                      descend: Bool, state: inout DrainState) {
+        switch result {
+        case .changed:
+            retryCounts.removeValue(forKey: "d:" + path)
+            state.structuralChanged = true
+        case .retry:
+            // Safe additions may already have been applied before an incomplete
+            // snapshot was detected, so invalidate results while scheduling a retry.
+            state.structuralChanged = true
+            recordRetry(for: "d:" + path, state: &state)
+            pendingDirs.insert(path)
+            if descend { pendingDeep.insert(path) }
+        case .noChange:
+            retryCounts.removeValue(forKey: "d:" + path)
+        }
+    }
+
+    private func recordRetry(for key: String, state: inout DrainState) {
+        let attempts = retryCounts[key, default: 0] + 1
+        retryCounts[key] = attempts
+        state.retryNeeded = true
+        state.retryDelay = max(state.retryDelay, Self.retryDelay(for: attempts))
+    }
+
+    private func publishChanges(from state: DrainState) {
+        guard state.structuralChanged || state.visibleMetadataChanged else { return }
+        if state.structuralChanged { cachedQueryKey = nil }
+        revision &+= 1
+        onLiveChange?()
+    }
+
+    private func scheduleRetryIfNeeded(eventID: UInt64, state: DrainState) -> Bool {
+        guard state.retryNeeded else { return false }
+        pendingMaxEventID = max(pendingMaxEventID, eventID)
+        drainScheduled = true
+        Task { [weak self, delay = state.retryDelay] in
+            try? await Task.sleep(nanoseconds: delay)
+            guard !Task.isCancelled else { return }
+            await self?.drainChanges()
+        }
+        return true
     }
 
     private static func retryDelay(for attempt: Int) -> UInt64 {

@@ -9,7 +9,7 @@ EverythingMac is a native macOS filename-search application written in Swift 6. 
 - `Tests/IndexCoreTests/` contains the core behavior and regression tests.
 - `App/project.yml` is the source of truth for the Xcode project and all 3 executable targets.
 - `App/Sources/` contains the SwiftUI and AppKit interface.
-- `App/ServiceSources/Indexer/` contains the persistent index service entry point.
+- `App/ServiceSources/Indexing/` contains the persistent indexing service entry point.
 - `App/ServiceSources/Search/` contains the UI-facing search service entry point.
 - `App/Shared/` contains XPC messages, trust validation, and application-removal handling.
 - `App/LaunchAgents/` contains the `SMAppService` launch-agent property lists.
@@ -21,6 +21,13 @@ Run core tests from the repository root:
 
 ```bash
 swift test
+```
+
+Run the complete quality gate before committing production Swift changes. It
+enforces a cyclomatic-complexity maximum of 10 and 95% core line coverage:
+
+```bash
+./scripts/check-quality.sh
 ```
 
 Generate and compile the complete application after changing UI, service, signing, or project configuration code:
@@ -47,7 +54,7 @@ Test whole-index performance in Release. Debug search timings do not represent t
 The request path is:
 
 ```text
-EverythingMac.app → EverythingMacSearchService → EverythingMacIndexer
+EverythingMac.app → EverythingMacSearchService → EverythingMacIndexingService
 ```
 
 Only the indexer receives Full Disk Access. Keep filesystem scanning, cache access, index mutation, and query execution there. The UI owns presentation and user-confirmed file actions. The search service remains a narrow forwarding boundary.
@@ -55,6 +62,8 @@ Only the indexer receives Full Disk Access. Keep filesystem scanning, cache acce
 Both XPC listeners validate code signatures in `App/Shared/ConnectionTrust.swift`. The indexer and app intentionally use `com.everythingmac.app` as their signing identifier. The search service uses `EverythingMacSearchService`. If an identifier changes, update `ConnectionTrust`, `App/project.yml`, both build scripts, and the relevant tests or verification together.
 
 The services are user launch agents registered through `SMAppService`. Quitting the UI must not stop indexing. Removing the application bundle must unregister both agents and remove generated data. An in-place application upgrade must preserve them. Keep both cases working when changing `ApplicationBundleMonitor` or installation scripts.
+
+`BackgroundServices.registrationRevision` reloads stored launch-agent definitions after an embedded plist or executable-path change. Bump it whenever an existing registration must be replaced. Refresh both services together because the search service retains its connection to the indexing service.
 
 ## Preserve index correctness
 

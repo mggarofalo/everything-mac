@@ -93,51 +93,70 @@ private enum SlashCommandQueryParser {
         to plan: inout Query.Plan
     ) {
         switch command {
-        case "/filetype":
-            guard let extensions = QueryValueParser.fileTypes(argument) else {
-                invalidate(&plan, "/filetype expects comma-separated extensions, such as md,docx.")
-                return
-            }
-            if group > 0, plan.termGroups[group].isEmpty {
-                plan.alternativeFileTypes[group, default: []].append(contentsOf: extensions)
-            } else {
-                plan.fileTypes.append(contentsOf: extensions)
-            }
-        case "/in":
-            guard let path = QueryValueParser.absolutePath(argument) else {
-                invalidate(&plan, "/in expects an absolute path or one beginning with ~.")
-                return
-            }
-            plan.directories.append(path)
-        case "/limit":
-            guard let limit = QueryValueParser.limit(argument) else {
-                invalidate(&plan, "/limit expects a positive number.")
-                return
-            }
-            plan.limit = limit
-        case "/modified":
-            guard let constraint = QueryValueParser.modified(argument) else {
-                invalidate(&plan, "/modified expects today, Nd, DATE, or DATE..DATE.")
-                return
-            }
-            plan.modified.append(constraint)
+        case "/filetype": applyFileTypes(argument, group: group, to: &plan)
+        case "/in": applyDirectory(argument, to: &plan)
+        case "/limit": applyLimit(argument, to: &plan)
+        case "/modified": applyModified(argument, to: &plan)
         case "/not":
             plan.excludedTerms.append(argument)
-        case "/size":
-            guard let constraint = QueryValueParser.size(argument) else {
-                invalidate(&plan, "/size expects bytes such as >100mb or 1mb..1gb.")
-                return
-            }
-            plan.sizes.append(constraint)
-        case "/type":
-            guard let kind = QueryValueParser.fileKind(argument) else {
-                invalidate(&plan, "/type expects file or folder.")
-                return
-            }
-            plan.kind = kind
+        case "/size": applySize(argument, to: &plan)
+        case "/type": applyKind(argument, to: &plan)
         default:
             break
         }
+    }
+
+    private static func applyFileTypes(_ argument: String, group: Int,
+                                       to plan: inout Query.Plan) {
+        guard let extensions = QueryValueParser.fileTypes(argument) else {
+            invalidate(&plan, "/filetype expects comma-separated extensions, such as md,docx.")
+            return
+        }
+        if group > 0, plan.termGroups[group].isEmpty {
+            plan.alternativeFileTypes[group, default: []].append(contentsOf: extensions)
+        } else {
+            plan.fileTypes.append(contentsOf: extensions)
+        }
+    }
+
+    private static func applyDirectory(_ argument: String, to plan: inout Query.Plan) {
+        guard let path = QueryValueParser.absolutePath(argument) else {
+            invalidate(&plan, "/in expects an absolute path or one beginning with ~.")
+            return
+        }
+        plan.directories.append(path)
+    }
+
+    private static func applyLimit(_ argument: String, to plan: inout Query.Plan) {
+        guard let limit = QueryValueParser.limit(argument) else {
+            invalidate(&plan, "/limit expects a positive number.")
+            return
+        }
+        plan.limit = limit
+    }
+
+    private static func applyModified(_ argument: String, to plan: inout Query.Plan) {
+        guard let constraint = QueryValueParser.modified(argument) else {
+            invalidate(&plan, "/modified expects today, Nd, DATE, or DATE..DATE.")
+            return
+        }
+        plan.modified.append(constraint)
+    }
+
+    private static func applySize(_ argument: String, to plan: inout Query.Plan) {
+        guard let constraint = QueryValueParser.size(argument) else {
+            invalidate(&plan, "/size expects bytes such as >100mb or 1mb..1gb.")
+            return
+        }
+        plan.sizes.append(constraint)
+    }
+
+    private static func applyKind(_ argument: String, to plan: inout Query.Plan) {
+        guard let kind = QueryValueParser.fileKind(argument) else {
+            invalidate(&plan, "/type expects file or folder.")
+            return
+        }
+        plan.kind = kind
     }
 
     private static func invalidate(_ plan: inout Query.Plan, _ message: String) {
