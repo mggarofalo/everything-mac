@@ -4,6 +4,7 @@ import IndexCore
 let indexMachServiceName = "com.everythingmac.indexer"
 let searchMachServiceName = "com.everythingmac.search"
 let indexChangedNotification = Notification.Name("com.everythingmac.index-changed")
+let indexProgressNotification = Notification.Name("com.everythingmac.index-progress")
 
 @objc protocol EverythingMacServiceProtocol {
     func perform(_ request: Data, withReply reply: @escaping @Sendable (Data) -> Void)
@@ -59,9 +60,12 @@ struct SearchResponse: Codable, Sendable {
 }
 
 enum ServicePaths {
-    static func cacheURL() -> URL {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+    static var applicationSupportURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("Everything-Mac", isDirectory: true)
-        return base.appendingPathComponent("index.idx")
+    }
+
+    static func cacheURL() -> URL {
+        applicationSupportURL.appendingPathComponent("index.idx")
     }
 }

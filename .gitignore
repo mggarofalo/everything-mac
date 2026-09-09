@@ -3,6 +3,7 @@
 DerivedData/
 App/build/
 App/EverythingMac.app
+dist/
 
 # XcodeGen output (regenerated from App/project.yml by scripts/build-dev.sh)
 *.xcodeproj
