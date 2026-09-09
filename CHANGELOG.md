@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.9.1
+
+- Keep search matching options exclusively in the configuration menu beside the
+  search field instead of duplicating them in the View menu.
+
 ## 0.9.0
 
 - Expand the core regression suite, enforce at least 95% line coverage, and cap
