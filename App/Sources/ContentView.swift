@@ -28,10 +28,27 @@ struct ContentView: View {
                         onTextChange: { model.queryChanged() },
                         onOptionsChange: { model.searchOptionsChanged() })
             Divider()
-            ResultsTable(rows: model.results,
-                         onSort: { k, a in model.setSort(k, ascending: a) },
-                         onSelect: { model.select($0) },
-                         onActivate: { ResultActions.open($0) })
+            ZStack {
+                ResultsTable(rows: model.results,
+                             onSort: { k, a in model.setSort(k, ascending: a) },
+                             onSelect: { model.select($0) },
+                             onActivate: { ResultActions.open($0) })
+                if fdaGranted && model.total == 0 && model.results.isEmpty {
+                    HStack(spacing: 10) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("Starting indexer")
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Starting Indexer…").font(.headline)
+                            Text("Preparing the first scan").foregroundStyle(.secondary)
+                        }
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 14)
+                    .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12))
+                    .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
+                }
+            }
             Divider()
             StatusBar(total: model.total, shown: model.results.count, scanning: model.scanning)
         }

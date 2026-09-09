@@ -6,12 +6,20 @@ actor SearchClient {
     private var onLiveChange: (@Sendable () -> Void)?
     private var onProgress: (@Sendable (Int) -> Void)?
     private nonisolated(unsafe) var notificationToken: NSObjectProtocol?
+    private nonisolated(unsafe) var progressNotificationToken: NSObjectProtocol?
 
     init() {
         notificationToken = DistributedNotificationCenter.default().addObserver(
             forName: indexChangedNotification, object: nil, queue: nil
         ) { [weak self] _ in
             Task { await self?.indexChanged() }
+        }
+        progressNotificationToken = DistributedNotificationCenter.default().addObserver(
+            forName: indexProgressNotification, object: nil, queue: nil
+        ) { [weak self] notification in
+            guard let value = notification.object as? String,
+                  let count = Int(value) else { return }
+            Task { await self?.indexProgressed(to: count) }
         }
     }
 
@@ -76,6 +84,11 @@ actor SearchClient {
         guard let status = try? await status() else { return }
         if status.scanning { onProgress?(status.totalCount) }
         onLiveChange?()
+    }
+
+    private func indexProgressed(to count: Int) async {
+        guard let status = try? await status(), status.scanning else { return }
+        onProgress?(count)
     }
 
     private func call<P: Encodable, R: Decodable>(_ operation: ServiceOperation,

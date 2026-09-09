@@ -45,7 +45,13 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
                 DistributedNotificationCenter.default().post(name: indexChangedNotification,
                                                              object: nil)
             }
-            await index.startUp(onLiveChange: changed, onProgress: { _ in },
+            let progressed: @Sendable (Int) -> Void = { count in
+                DistributedNotificationCenter.default().post(
+                    name: indexProgressNotification,
+                    object: String(count)
+                )
+            }
+            await index.startUp(onLiveChange: changed, onProgress: progressed,
                                 accessGeneration: generation)
             installMaintenanceTimers(generation: generation)
             changed()
@@ -163,6 +169,8 @@ private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
 @main
 enum EverythingMacIndexer {
     static func main() {
+        if ApplicationBundleMonitor.runObserverIfRequested() { return }
+        ApplicationBundleMonitor.launchObserver()
         let delegate = ListenerDelegate()
         let listener = NSXPCListener(machServiceName: indexMachServiceName)
         listener.delegate = delegate

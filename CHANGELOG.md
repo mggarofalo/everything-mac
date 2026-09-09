@@ -2,6 +2,14 @@
 
 ## 0.8.0
 
+- Add versioned drag-to-Applications DMG packaging with a functional local
+  preview mode and a fail-closed Developer ID notarization path.
+- Unregister the indexing and search agents and remove their cache when the app
+  bundle is deleted, while preserving both across an in-place app upgrade.
+- Show a loading panel while the indexer starts, then stream the live first-scan
+  file count through the status bar while the app remains usable.
+- Clear stale results and counts at the start of a forced rebuild, and prevent
+  searches from repopulating the old snapshot before the new index is ready.
 - Replace slash-command composition with colon filters and a Boolean expression
   grammar supporting implicit/explicit `AND`, `OR`, `XOR`, `NOT`, and parentheses.
 - Add token-aware filter/operator completion and render uppercase Boolean operators

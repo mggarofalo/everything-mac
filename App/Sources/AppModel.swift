@@ -97,10 +97,12 @@ final class AppModel: ObservableObject {
                 accessGeneration: generation
             )
             guard !Task.isCancelled, hasFullDiskAccess else { return }
-            scanning = false
-            total = await index.totalCount
+            if let status = await index.currentStatus() {
+                scanning = status.scanning
+                total = status.totalCount
+            }
             rules = await index.currentRules()
-            await runSearch()
+            if !scanning { await runSearch() }
         }
     }
 
@@ -147,6 +149,7 @@ final class AppModel: ObservableObject {
     }
 
     func runSearch() async {
+        guard !scanning else { return }
         searchSeq &+= 1
         let mySeq = searchSeq
         let r = await index.search(query, matchPath: matchPath, caseInsensitive: !caseSensitive,
@@ -165,7 +168,10 @@ final class AppModel: ObservableObject {
         liveTask = Task {
             try? await Task.sleep(nanoseconds: 200_000_000)
             if Task.isCancelled { return }
-            total = await index.totalCount
+            if let status = await index.currentStatus() {
+                scanning = status.scanning
+                total = status.totalCount
+            }
             await runSearch()
         }
     }
@@ -206,11 +212,10 @@ final class AppModel: ObservableObject {
     // wants to be sure it's fresh. Persists the result so the next launch matches.
     func rebuildIndex() {
         guard hasFullDiskAccess, !scanning else { return }
-        scanning = true
-        selectedPath = nil
-        selectedIdentity = nil
+        beginRebuild()
         let generation = accessGeneration
         maintenanceTask = Task {
+            await index.cancelPendingSearch()
             await index.rescanAll(accessGeneration: generation)
             guard !Task.isCancelled, hasFullDiskAccess,
                   generation == accessGeneration else { return }
@@ -225,11 +230,10 @@ final class AppModel: ObservableObject {
 
     func applyRules(_ newRules: ExcludeRules) {
         guard hasFullDiskAccess, !scanning else { return }
-        scanning = true
-        selectedPath = nil
-        selectedIdentity = nil
+        beginRebuild()
         let generation = accessGeneration
         maintenanceTask = Task {
+            await index.cancelPendingSearch()
             await index.setRules(newRules, accessGeneration: generation)
             guard !Task.isCancelled, hasFullDiskAccess,
                   generation == accessGeneration else { return }
@@ -246,5 +250,16 @@ final class AppModel: ObservableObject {
             total = await index.totalCount
             await runSearch()
         }
+    }
+
+    private func beginRebuild() {
+        task?.cancel()
+        liveTask?.cancel()
+        searchSeq &+= 1
+        scanning = true
+        results = []
+        total = 0
+        selectedPath = nil
+        selectedIdentity = nil
     }
 }
