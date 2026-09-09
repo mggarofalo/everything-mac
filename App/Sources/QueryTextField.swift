@@ -194,7 +194,9 @@ final class QueryEditorContainer: NSView {
                                 width: max(bounds.width, textView.intrinsicContentSize.width),
                                 height: bounds.height)
         placeholder.sizeToFit()
-        placeholder.frame.origin = NSPoint(x: 5,
+        let textOrigin = textView.textContainerOrigin.x
+            + (textView.textContainer?.lineFragmentPadding ?? 0)
+        placeholder.frame.origin = NSPoint(x: floor(textOrigin),
                                             y: floor((bounds.height - placeholder.frame.height) / 2))
     }
 }

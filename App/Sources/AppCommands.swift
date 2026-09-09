@@ -98,8 +98,10 @@ struct AppCommands: Commands {
 
         // HELP — point at the project instead of the empty default Help menu.
         CommandGroup(replacing: .help) {
-            Button("EverythingMac Help") { Self.open("https://github.com/alesloa/everything-mac") }
-            Button("Report an Issue…") { Self.open("https://github.com/alesloa/everything-mac/issues/new") }
+            Button("EverythingMac Help") { Self.open("https://github.com/mggarofalo/everything-mac") }
+            Button("Report an Issue…") {
+                Self.open("https://github.com/mggarofalo/everything-mac/issues/new")
+            }
         }
     }
 
