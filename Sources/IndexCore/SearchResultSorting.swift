@@ -23,6 +23,7 @@ public extension QueryEngine {
         in store: FileStore,
         isCancelled: @Sendable () -> Bool = { false }
     ) -> [UInt32] {
+        guard limit > 0 else { return [] }
         let ascendingComparator = comparator(for: key, in: store)
         let precedes: (UInt32, UInt32) -> Bool = ascending
             ? ascendingComparator

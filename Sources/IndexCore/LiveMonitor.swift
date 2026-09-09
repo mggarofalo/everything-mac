@@ -51,115 +51,159 @@ public final class LiveMonitor: @unchecked Sendable {
                                        rules: ExcludeRules, volID: UInt32,
                                        newlyIndexedDirs: inout Set<String>) -> InspectionResult {
         guard let dirID = store.idForDirPath(directory) else { return .noChange }
-
-        // Cheap gate: a directory's mtime advances only when its entries are
-        // added/removed/renamed, NOT when a file's contents change. Most FSEvents are
-        // content modifications (logs, caches, databases), so once we've reconciled a
-        // dir, repeat events whose mtime is unchanged skip the expensive readdir+diff.
-        // This is what keeps live-update CPU flat under heavy filesystem churn.
-        // Nanosecond precision, and nil on a dir's first event (so nothing is missed).
-        var dst = stat()
-        let haveStat = stat(directory, &dst) == 0
-        let diskMtimeNs = haveStat
-            ? Int64(dst.st_mtimespec.tv_sec) * 1_000_000_000 + Int64(dst.st_mtimespec.tv_nsec) : 0
-        if haveStat, store.reconcileMtime(of: dirID) == diskMtimeNs { return .noChange }
-
+        let diskMtime = directoryMtimeNanoseconds(directory)
+        if let diskMtime, diskMtime == store.reconcileMtime(of: dirID) { return .noChange }
         let existing = store.childIDs(of: dirID)
-
         guard let dir = opendir(directory) else {
-            // Only absence proves that the indexed children disappeared. A transient
-            // permission failure (notably FDA being revoked) must not erase them and
-            // later persist a misleading partial index.
-            guard errno == ENOENT || errno == ENOTDIR else { return .retry }
-            var changed = false
-            for id in existing { markSubtreeDeleted(id, in: &store); changed = true }
-            return changed ? .changed : .noChange
+            return reconcileMissingDirectory(existing, in: &store)
         }
         defer { closedir(dir) }
-
-        // First pass: names + project-marker detection, so live reconcile applies the
-        // SAME marker-scoped exclusion the full scan did (generic names like "build"
-        // skipped only inside a project dir).
-        var names: [String] = []
-        var inProjectDir = false
-        errno = 0
-        while let e = readdir(dir) {
-            let name = withUnsafePointer(to: e.pointee.d_name) {
-                $0.withMemoryRebound(to: CChar.self, capacity: Int(NAME_MAX)) { String(cString: $0) }
-            }
-            if name == "." || name == ".." { continue }
-            names.append(name)
-            if ExcludeRules.projectMarkers.contains(name) { inProjectDir = true }
-        }
-        let readdirFailed = errno != 0
-
-        // Live child names as a Set so the per-entry "is this new?" check below is O(1).
-        // childID(named:) is a linear scan that decodes a String per comparison, i.e.
-        // O(entries · children) per reconcile — quadratic, which pegged a core when a
-        // big, busy directory (a browser cache with thousands of files) reconciled on
-        // every add/remove. Building one Set makes the whole diff O(entries + children).
-        var existingByName: [String: UInt32] = [:]
-        existingByName.reserveCapacity(existing.count)
-        for id in existing { existingByName[store.name(of: id)] = id }
-
+        let snapshot = readDirectorySnapshot(dir)
+        let existingByName = childIDsByName(existing, in: store)
         var onDisk = Set<String>()
         var changed = false
-        var incompleteSnapshot = readdirFailed
-        for name in names {
-            let full = (directory as NSString).appendingPathComponent(name)
-            if rules.shouldExclude(name: name, path: full, isHidden: name.hasPrefix("."), inProjectDir: inProjectDir) { continue }
-            var st = stat()
-            guard lstat(full, &st) == 0 else {
-                // A vanished child is a valid deletion race. Any other failure means
-                // the listing is incomplete, so it is unsafe to tombstone names that
-                // were not successfully inspected or checkpoint this event.
-                if errno != ENOENT && errno != ENOTDIR { incompleteSnapshot = true }
-                continue
-            }
-            let isDir = (st.st_mode & S_IFMT) == S_IFDIR
-            if !isDir && rules.shouldExcludeFile(name: name) { continue }
-            onDisk.insert(name)
-            let size = UInt64(st.st_size)
-            let mtime = Int64(st.st_mtimespec.tv_sec)
-            if let existingID = existingByName[name] {
-                if store.isDir(of: existingID) != isDir {
-                    markSubtreeDeleted(existingID, in: &store)
-                    let newID = store.append(name: name, parent: dirID, size: size,
-                                             mtime: mtime, isDir: isDir, volID: volID)
-                    if isDir {
-                        Scanner(rules: rules).indexContents(of: full, under: newID, into: &store, volID: volID)
-                        newlyIndexedDirs.insert(full)
-                    }
-                    changed = true
-                } else if store.size(of: existingID) != size || store.mtime(of: existingID) != mtime {
-                    store.updateMetadata(of: existingID, size: size, mtime: mtime)
-                    changed = true
-                }
-            } else {
-                let newID = store.append(name: name, parent: dirID, size: UInt64(st.st_size),
-                                         mtime: Int64(st.st_mtimespec.tv_sec), isDir: isDir, volID: volID)
-                changed = true
-                // A newly-created directory can hold a whole subtree that FSEvents
-                // coalesced or reported out of parent-first order. Index it now so
-                // nested/bulk creation is never dropped, and record it so a sibling
-                // event for the same subtree this batch doesn't re-list it.
-                if isDir {
-                    Scanner(rules: rules).indexContents(of: full, under: newID, into: &store, volID: volID)
-                    newlyIndexedDirs.insert(full)
-                }
+        var incompleteSnapshot = snapshot.incomplete
+        for name in snapshot.names {
+            switch reconcileEntry(name, directory: directory, parentID: dirID,
+                                  existingID: existingByName[name],
+                                  inProjectDir: snapshot.inProjectDir, rules: rules,
+                                  volID: volID, store: &store,
+                                  newlyIndexedDirs: &newlyIndexedDirs) {
+            case .excluded, .vanished: break
+            case .failed: incompleteSnapshot = true
+            case .present(let entryChanged):
+                onDisk.insert(name)
+                changed = changed || entryChanged
             }
         }
         if incompleteSnapshot { return .retry }
-        for id in existing where !onDisk.contains(store.name(of: id)) {
-            // Deleting a directory must tombstone its whole subtree, not just the
-            // dir entry, or descendants linger as live ghost results.
-            markSubtreeDeleted(id, in: &store)
-            changed = true
-        }
-        // Remember the mtime we just reconciled at so repeat events for this dir
-        // (with the same mtime) take the cheap skip above instead of re-reading it.
-        if haveStat { store.setReconcileMtime(dirID, diskMtimeNs) }
+        changed = removeMissing(existing, onDisk: onDisk, from: &store) || changed
+        if let diskMtime { store.setReconcileMtime(dirID, diskMtime) }
         return changed ? .changed : .noChange
+    }
+
+    private struct DirectorySnapshot {
+        let names: [String]
+        let inProjectDir: Bool
+        let incomplete: Bool
+    }
+
+    private enum EntryInspection {
+        case excluded
+        case vanished
+        case failed
+        case present(changed: Bool)
+    }
+
+    // A directory's mtime changes when entries are added, removed, or renamed.
+    // Nanosecond precision lets repeated content-only events avoid readdir entirely.
+    private static func directoryMtimeNanoseconds(_ path: String) -> Int64? {
+        var status = stat()
+        guard stat(path, &status) == 0 else { return nil }
+        return Int64(status.st_mtimespec.tv_sec) * 1_000_000_000
+            + Int64(status.st_mtimespec.tv_nsec)
+    }
+
+    private static func reconcileMissingDirectory(_ existing: [UInt32],
+                                                  in store: inout FileStore) -> InspectionResult {
+        // Only absence proves that indexed children disappeared. Permission and other
+        // transient failures must not turn a partial snapshot into durable deletions.
+        guard errno == ENOENT || errno == ENOTDIR else { return .retry }
+        guard !existing.isEmpty else { return .noChange }
+        for id in existing { markSubtreeDeleted(id, in: &store) }
+        return .changed
+    }
+
+    private static func readDirectorySnapshot(
+        _ directory: UnsafeMutablePointer<DIR>
+    ) -> DirectorySnapshot {
+        var names: [String] = []
+        var inProjectDir = false
+        errno = 0
+        while let entry = readdir(directory) {
+            let name = withUnsafePointer(to: entry.pointee.d_name) {
+                $0.withMemoryRebound(to: CChar.self, capacity: Int(NAME_MAX)) {
+                    String(cString: $0)
+                }
+            }
+            guard name != ".", name != ".." else { continue }
+            names.append(name)
+            if ExcludeRules.projectMarkers.contains(name) { inProjectDir = true }
+        }
+        return DirectorySnapshot(names: names, inProjectDir: inProjectDir,
+                                 incomplete: errno != 0)
+    }
+
+    private static func childIDsByName(_ ids: [UInt32],
+                                       in store: FileStore) -> [String: UInt32] {
+        Dictionary(uniqueKeysWithValues: ids.map { (store.name(of: $0), $0) })
+    }
+
+    private static func reconcileEntry(
+        _ name: String, directory: String, parentID: UInt32, existingID: UInt32?,
+        inProjectDir: Bool, rules: ExcludeRules, volID: UInt32,
+        store: inout FileStore, newlyIndexedDirs: inout Set<String>
+    ) -> EntryInspection {
+        let fullPath = (directory as NSString).appendingPathComponent(name)
+        if rules.shouldExclude(name: name, path: fullPath, isHidden: name.hasPrefix("."),
+                               inProjectDir: inProjectDir) { return .excluded }
+        var status = stat()
+        guard lstat(fullPath, &status) == 0 else {
+            return errno == ENOENT || errno == ENOTDIR ? .vanished : .failed
+        }
+        let isDirectory = (status.st_mode & S_IFMT) == S_IFDIR
+        if !isDirectory, rules.shouldExcludeFile(name: name) { return .excluded }
+        let metadata = (size: UInt64(status.st_size), mtime: Int64(status.st_mtimespec.tv_sec))
+        guard let existingID else {
+            appendEntry(name, at: fullPath, parentID: parentID, metadata: metadata,
+                        isDirectory: isDirectory, rules: rules, volID: volID,
+                        store: &store, newlyIndexedDirs: &newlyIndexedDirs)
+            return .present(changed: true)
+        }
+        return updateEntry(existingID, name: name, path: fullPath, parentID: parentID,
+                           metadata: metadata, isDirectory: isDirectory, rules: rules,
+                           volID: volID, store: &store,
+                           newlyIndexedDirs: &newlyIndexedDirs)
+    }
+
+    private static func updateEntry(
+        _ id: UInt32, name: String, path: String, parentID: UInt32,
+        metadata: (size: UInt64, mtime: Int64), isDirectory: Bool,
+        rules: ExcludeRules, volID: UInt32, store: inout FileStore,
+        newlyIndexedDirs: inout Set<String>
+    ) -> EntryInspection {
+        if store.isDir(of: id) != isDirectory {
+            markSubtreeDeleted(id, in: &store)
+            appendEntry(name, at: path, parentID: parentID, metadata: metadata,
+                        isDirectory: isDirectory, rules: rules, volID: volID,
+                        store: &store, newlyIndexedDirs: &newlyIndexedDirs)
+            return .present(changed: true)
+        }
+        guard store.size(of: id) != metadata.size || store.mtime(of: id) != metadata.mtime else {
+            return .present(changed: false)
+        }
+        store.updateMetadata(of: id, size: metadata.size, mtime: metadata.mtime)
+        return .present(changed: true)
+    }
+
+    private static func appendEntry(
+        _ name: String, at path: String, parentID: UInt32,
+        metadata: (size: UInt64, mtime: Int64), isDirectory: Bool,
+        rules: ExcludeRules, volID: UInt32, store: inout FileStore,
+        newlyIndexedDirs: inout Set<String>
+    ) {
+        let id = store.append(name: name, parent: parentID, size: metadata.size,
+                              mtime: metadata.mtime, isDir: isDirectory, volID: volID)
+        guard isDirectory else { return }
+        Scanner(rules: rules).indexContents(of: path, under: id, into: &store, volID: volID)
+        newlyIndexedDirs.insert(path)
+    }
+
+    private static func removeMissing(_ existing: [UInt32], onDisk: Set<String>,
+                                      from store: inout FileStore) -> Bool {
+        let missing = existing.filter { !onDisk.contains(store.name(of: $0)) }
+        for id in missing { markSubtreeDeleted(id, in: &store) }
+        return !missing.isEmpty
     }
 
     /// Refresh metadata for one item reported by a file-level FSEvents stream.

@@ -1,7 +1,11 @@
 # Changelog
 
-## 0.8.0
+## 0.9.0
 
+- Expand the core regression suite, enforce at least 95% line coverage, and cap
+  production Swift cyclomatic complexity at 10.
+- Rename the indexing executable to `EverythingMacIndexingService` for parity
+  with `EverythingMacSearchService` while preserving its service and signing IDs.
 - Add versioned drag-to-Applications DMG packaging with a functional local
   preview mode and a fail-closed Developer ID notarization path.
 - Unregister the indexing and search agents and remove their cache when the app

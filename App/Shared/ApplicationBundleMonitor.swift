@@ -139,7 +139,7 @@ private final class RemovalObserver: @unchecked Sendable {
             // indexer may continue running its old inode until launchd next restarts it.
             let process = Process()
             process.executableURL = appURL.appendingPathComponent(
-                "Contents/MacOS/EverythingMacIndexer"
+                "Contents/MacOS/EverythingMacIndexingService"
             )
             process.arguments = [
                 ApplicationBundleMonitor.observerArgument,

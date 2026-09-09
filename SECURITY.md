@@ -26,7 +26,7 @@ EverythingMac does not index file contents. Full Disk Access still gives the ind
 
 ## Full Disk Access belongs to the indexer
 
-Only `EverythingMacIndexer` needs Full Disk Access. The main app and `EverythingMacSearchService` do not request it.
+Only `EverythingMacIndexingService` needs Full Disk Access. The main app and `EverythingMacSearchService` do not request it.
 
 The indexer checks access before loading or building the index. macOS enforces access to protected paths. Revoking Full Disk Access stops future protected filesystem reads, but it does not erase metadata already stored in the cache. Remove the app to run automatic cleanup, or delete the cache manually.
 
@@ -51,7 +51,7 @@ Moving the application bundle out of Applications triggers a separate removal ob
 The UI does not connect directly to the privileged indexer. Requests follow this path:
 
 ```text
-EverythingMac.app → EverythingMacSearchService → EverythingMacIndexer
+EverythingMac.app → EverythingMacSearchService → EverythingMacIndexingService
 ```
 
 Each XPC listener validates the connecting process with Security.framework. It requires the expected executable identifier and the same signing team as the receiving process. A process running under the same user account is not accepted on that fact alone.

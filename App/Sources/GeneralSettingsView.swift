@@ -6,7 +6,7 @@ struct GeneralSettingsView: View {
     var body: some View {
         Form {
             Section("Background services") {
-                LabeledContent("Indexer and search", value: BackgroundServices.statusText)
+                LabeledContent("Indexing and search", value: BackgroundServices.statusText)
                 Text("The index and search services stay available when this window is closed or quit.")
                     .font(.caption)
                     .foregroundStyle(.secondary)

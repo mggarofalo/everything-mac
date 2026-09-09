@@ -12,7 +12,7 @@ struct ContentView: View {
             if !fdaGranted {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text("Grant Full Disk Access to EverythingMacIndexer.")
+                    Text("Grant Full Disk Access to EverythingMacIndexingService.")
                     Spacer()
                     Button("Open Settings") { FullDiskAccess.openSettings() }
                 }
@@ -39,7 +39,7 @@ struct ContentView: View {
                             .controlSize(.small)
                             .accessibilityLabel("Starting indexer")
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Starting Indexer…").font(.headline)
+                            Text("Starting indexing service…").font(.headline)
                             Text("Preparing the first scan").foregroundStyle(.secondary)
                         }
                     }

@@ -1,0 +1,26 @@
+name: Quality
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v6
+      - name: Install build tools
+        run: brew install swiftlint xcodegen
+      - name: Test, coverage, and complexity
+        run: ./scripts/check-quality.sh
+      - name: Compile the complete app
+        run: |
+          xcodegen generate --spec App/project.yml --project App
+          xcodebuild -project App/EverythingMac.xcodeproj \
+            -scheme EverythingMac \
+            -configuration Release \
+            CODE_SIGNING_ALLOWED=NO \
+            build

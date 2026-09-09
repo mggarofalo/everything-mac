@@ -84,12 +84,22 @@ public enum ParallelScanner {
     /// so call it from a detached task, never on the actor.
     public static func scanWholeDisk(rules: ExcludeRules,
                                      progress: (@Sendable (Int) -> Void)? = nil) -> FileStore {
-        let builder = Builder(progress: progress)
-        let rootID = builder.appendRoot(name: "/")
-        let queue = DirQueue(seed: ("/", rootID))
+        scan(rootPath: "/", rules: rules,
+             workerCount: max(2, ProcessInfo.processInfo.activeProcessorCount),
+             progress: progress)
+    }
 
-        let workers = max(2, ProcessInfo.processInfo.activeProcessorCount)
-        DispatchQueue.concurrentPerform(iterations: workers) { _ in
+    /// Scoped entry point used by tests to exercise the same parallel scanner without
+    /// traversing the machine's real root. Production uses `scanWholeDisk` above.
+    static func scan(rootPath: String, rules: ExcludeRules, workerCount: Int,
+                     progress: (@Sendable (Int) -> Void)? = nil) -> FileStore {
+        let builder = Builder(progress: progress)
+        let rootName = rootPath == "/" || !rootPath.hasSuffix("/")
+            ? rootPath : String(rootPath.dropLast())
+        let rootID = builder.appendRoot(name: rootName)
+        let queue = DirQueue(seed: (rootName, rootID))
+
+        DispatchQueue.concurrentPerform(iterations: max(1, workerCount)) { _ in
             while let (path, parent) = queue.claim() {
                 let entries = readDirectory(path, rules: rules)
                 let ids = builder.appendChildren(entries, parent: parent)
