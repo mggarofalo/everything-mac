@@ -5,6 +5,7 @@ struct ContentView: View {
     @EnvironmentObject var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var fdaGranted = true
+    @State private var refreshServicesAfterSettings = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
@@ -12,9 +13,12 @@ struct ContentView: View {
             if !fdaGranted {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text("Grant Full Disk Access to EverythingMacIndexingService.")
+                    Text("Grant Full Disk Access to EverythingMac.")
                     Spacer()
-                    Button("Open Settings") { FullDiskAccess.openSettings() }
+                    Button("Open Settings") {
+                        refreshServicesAfterSettings = true
+                        FullDiskAccess.openSettings()
+                    }
                 }
                 .padding(8)
                 .background(.yellow.opacity(0.2))
@@ -58,16 +62,20 @@ struct ContentView: View {
             searchFocused = true
         }
         .onChange(of: scenePhase) {
-            if scenePhase == .active { refreshAccess() }
+            guard scenePhase == .active else { return }
+            let shouldRestart = refreshServicesAfterSettings
+            refreshServicesAfterSettings = false
+            refreshAccess(restartServicesIfDenied: shouldRestart)
         }
         .onChange(of: model.focusSearchSignal) { searchFocused = true }
     }
 
-    private func refreshAccess() {
+    private func refreshAccess(restartServicesIfDenied: Bool = false) {
         Task {
-            let granted = await model.index.serviceHasFullDiskAccess()
+            let granted = await model.refreshFullDiskAccess(
+                restartServicesIfDenied: restartServicesIfDenied
+            )
             fdaGranted = granted
-            model.updateFullDiskAccess(granted)
         }
     }
 }

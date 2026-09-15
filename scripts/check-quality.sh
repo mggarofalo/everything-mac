@@ -20,7 +20,15 @@ swift test --enable-code-coverage
 
 coverage_json="$(swift test --show-codecov-path)"
 profile="${coverage_json%/*}/default.profdata"
-binary="$(swift build --show-bin-path)/IndexCorePackageTests.xctest/Contents/MacOS/IndexCorePackageTests"
+bin_dir="$(swift build --show-bin-path)"
+binary="$bin_dir/IndexCorePackageTests.xctest/Contents/MacOS/IndexCorePackageTests"
+if [[ ! -x "$binary" ]]; then
+  binary="$bin_dir/IndexCoreTests.xctest/Contents/MacOS/IndexCoreTests"
+fi
+if [[ ! -x "$binary" ]]; then
+  echo "Could not find the IndexCore test executable under $bin_dir." >&2
+  exit 1
+fi
 report="$(xcrun llvm-cov report "$binary" \
   -instr-profile="$profile" \
   -ignore-filename-regex='Tests/|\.build/' \

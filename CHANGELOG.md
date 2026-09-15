@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.2
+
+- Restart the persistent indexing and search agents after Full Disk Access is
+  granted, and align the banner instructions with the single `EverythingMac`
+  entry shown by macOS.
+
 ## 0.9.1
 
 - Keep search matching options exclusively in the configuration menu beside the

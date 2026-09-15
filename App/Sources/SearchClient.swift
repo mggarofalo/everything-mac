@@ -35,11 +35,12 @@ actor SearchClient {
         get async { (try? await status().totalCount) ?? 0 }
     }
 
-    func serviceHasFullDiskAccess() async -> Bool {
-        (try? await status().hasFullDiskAccess) ?? false
-    }
-
     func currentStatus() async -> ServiceStatus? { try? await status() }
+
+    func resetConnection() {
+        connection?.invalidate()
+        connection = nil
+    }
 
     func currentRules() async -> ExcludeRules {
         (try? await call(.getRules, payload: Optional<Bool>.none, as: ExcludeRules.self)) ?? .defaults

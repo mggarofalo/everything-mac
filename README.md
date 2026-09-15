@@ -12,11 +12,11 @@ EverythingMac supports macOS 14 Sonoma and newer.
 
 Open the release DMG and drag `EverythingMac.app` into Applications. Launch the app from Applications so its background services have a stable path.
 
-The indexing service needs Full Disk Access. The UI and search service do not. Add this executable in `System Settings > Privacy & Security > Full Disk Access`:
-
-```text
-/Applications/EverythingMac.app/Contents/MacOS/EverythingMacIndexingService
-```
+The indexing service needs Full Disk Access. In
+`System Settings > Privacy & Security > Full Disk Access`, enable
+`EverythingMac`. macOS shows the application and its signed indexing service as
+one entry. When you return to EverythingMac, it refreshes both background
+services so the new permission takes effect.
 
 EverythingMac shows a loading panel while the services start. The status bar reports progress once the first scan begins. Later launches load the saved index and replay filesystem changes.
 

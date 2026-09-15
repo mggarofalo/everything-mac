@@ -64,4 +64,31 @@ import ServiceManagement
             defaults.set(registrationRevision, forKey: registrationRevisionKey)
         }
     }
+
+    static func restartAfterFullDiskAccessChange() -> Bool {
+        guard areEnabled else { return false }
+
+        for service in services.reversed() {
+            do {
+                try service.unregister()
+            } catch {
+                NSLog("EverythingMac could not stop background service: %@",
+                      error.localizedDescription)
+                install()
+                return false
+            }
+        }
+
+        var registrationSucceeded = true
+        for service in services {
+            do {
+                try service.register()
+            } catch {
+                registrationSucceeded = false
+                NSLog("EverythingMac could not restart background service: %@",
+                      error.localizedDescription)
+            }
+        }
+        return registrationSucceeded
+    }
 }
