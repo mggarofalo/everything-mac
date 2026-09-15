@@ -48,7 +48,7 @@ if grep -q 'com.apple.security.get-task-allow' <<<"$SIGNATURE"; then
   exit 1
 fi
 for service_spec in \
-  "Contents/Library/LoginItems/EverythingMacIndexingService.app:com.everythingmac.indexer" \
+  "Contents/MacOS/EverythingMacIndexingService:com.everythingmac.app" \
   "Contents/MacOS/EverythingMacSearchService:EverythingMacSearchService"; do
   service_path="${service_spec%%:*}"
   expected_identifier="${service_spec#*:}"
@@ -88,7 +88,7 @@ fi
 # that already point at the current executables. A stale registration can make
 # kickstart wait indefinitely; launching the UI refreshes it through SMAppService.
 for service_spec in \
-  "com.everythingmac.indexing-service:Contents/Library/LoginItems/EverythingMacIndexingService.app/Contents/MacOS/EverythingMacIndexingService" \
+  "com.everythingmac.indexing-agent:Contents/MacOS/EverythingMacIndexingService" \
   "com.everythingmac.search:Contents/MacOS/EverythingMacSearchService"; do
   service_label="${service_spec%%:*}"
   service_path="${service_spec#*:}"

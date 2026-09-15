@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.4
+
+- Restore the single EverythingMac Full Disk Access entry shared by the app and
+  indexer. A missing XPC response is now treated as service unavailability,
+  rather than incorrectly displaying the Full Disk Access banner, and failed
+  XPC connections are discarded so later status checks can reconnect.
+
 ## 0.9.3
 
 - Package the indexing agent as a distinct background application so macOS can

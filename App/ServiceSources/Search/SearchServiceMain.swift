@@ -1,17 +1,13 @@
 import Foundation
 
 private final class SearchService: NSObject, EverythingMacServiceProtocol, @unchecked Sendable {
-    private let connection: NSXPCConnection
-
-    override init() {
-        connection = NSXPCConnection(machServiceName: indexMachServiceName, options: [])
-        super.init()
-        connection.remoteObjectInterface = NSXPCInterface(with: EverythingMacServiceProtocol.self)
-        connection.resume()
-    }
+    private let connectionLock = NSLock()
+    private var connection: NSXPCConnection?
 
     func perform(_ request: Data, withReply reply: @escaping @Sendable (Data) -> Void) {
+        let connection = activeConnection()
         let proxy = connection.remoteObjectProxyWithErrorHandler { error in
+            self.discardConnection(connection)
             let failure = ServiceReply.failure("Index service unavailable: \(error.localizedDescription)")
             reply((try? JSONEncoder().encode(failure)) ?? Data())
         }
@@ -21,6 +17,28 @@ private final class SearchService: NSObject, EverythingMacServiceProtocol, @unch
             return
         }
         service.perform(request, withReply: reply)
+    }
+
+    private func activeConnection() -> NSXPCConnection {
+        connectionLock.lock()
+        defer { connectionLock.unlock() }
+        if let connection { return connection }
+        let newConnection = NSXPCConnection(machServiceName: indexMachServiceName, options: [])
+        newConnection.remoteObjectInterface = NSXPCInterface(with: EverythingMacServiceProtocol.self)
+        newConnection.resume()
+        connection = newConnection
+        return newConnection
+    }
+
+    private func discardConnection(_ candidate: NSXPCConnection) {
+        connectionLock.lock()
+        guard connection === candidate else {
+            connectionLock.unlock()
+            return
+        }
+        connection = nil
+        connectionLock.unlock()
+        candidate.invalidate()
     }
 }
 

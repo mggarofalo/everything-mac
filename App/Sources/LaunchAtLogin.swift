@@ -4,13 +4,13 @@ import ServiceManagement
 @MainActor enum BackgroundServices {
     // Bump this when an embedded launch-agent plist changes in a way that an
     // existing SMAppService registration must reload. Revision 1 migrated the
-    // renamed executable; revision 2 moves the indexer into an app-like wrapper;
-    // revision 3 gives that wrapper a fresh launchd registration so its distinct
-    // signing requirement is not inherited from the former raw executable.
-    private static let registrationRevision = 3
+    // renamed executable; revisions 2 and 3 briefly moved the indexer into an
+    // app-like wrapper. Revision 4 restores the shared signing identity used by
+    // the single EverythingMac Full Disk Access grant.
+    private static let registrationRevision = 4
     private static let registrationRevisionKey = "services.registrationRevision"
     private static let services = [
-        SMAppService.agent(plistName: "com.everythingmac.indexing-service.plist"),
+        SMAppService.agent(plistName: "com.everythingmac.indexing-agent.plist"),
         SMAppService.agent(plistName: "com.everythingmac.search.plist"),
     ]
 
@@ -30,11 +30,20 @@ import ServiceManagement
     static func install() {
         let legacyMain = SMAppService.mainApp
         let legacyHelper = SMAppService.loginItem(identifier: "com.everythingmac.loginhelper")
-        let legacyIndexer = SMAppService.agent(plistName: "com.everythingmac.indexer.plist")
+        let obsoleteIndexers = [
+            SMAppService.agent(plistName: "com.everythingmac.indexer.plist"),
+            SMAppService.agent(plistName: "com.everythingmac.indexing-service.plist"),
+        ]
         try? legacyMain.unregister()
         try? legacyHelper.unregister()
-        if legacyIndexer.status == .enabled {
-            try? legacyIndexer.unregister()
+        for obsoleteIndexer in obsoleteIndexers where obsoleteIndexer.status == .enabled {
+            do {
+                try obsoleteIndexer.unregister()
+            } catch {
+                NSLog("EverythingMac could not remove an obsolete indexing service: %@",
+                      error.localizedDescription)
+                return
+            }
         }
 
         let defaults = UserDefaults.standard

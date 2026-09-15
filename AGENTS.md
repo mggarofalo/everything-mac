@@ -59,7 +59,7 @@ EverythingMac.app → EverythingMacSearchService → EverythingMacIndexingServic
 
 Only the indexer receives Full Disk Access. Keep filesystem scanning, cache access, index mutation, and query execution there. The UI owns presentation and user-confirmed file actions. The search service remains a narrow forwarding boundary.
 
-Both XPC listeners validate code signatures in `App/Shared/ConnectionTrust.swift`. The app uses `com.everythingmac.app`, the app-wrapped indexer uses `com.everythingmac.indexer`, and the search service uses `EverythingMacSearchService`. If an identifier changes, update `ConnectionTrust`, `App/project.yml`, both build scripts, and the relevant tests or verification together.
+Both XPC listeners validate code signatures in `App/Shared/ConnectionTrust.swift`. The indexer and app intentionally use `com.everythingmac.app` as their signing identifier so the single EverythingMac Full Disk Access grant covers both processes. The search service uses `EverythingMacSearchService`. If an identifier changes, update `ConnectionTrust`, `App/project.yml`, both build scripts, and the relevant tests or verification together.
 
 The services are user launch agents registered through `SMAppService`. Quitting the UI must not stop indexing. Removing the application bundle must unregister both agents and remove generated data. An in-place application upgrade must preserve them. Keep both cases working when changing `ApplicationBundleMonitor` or installation scripts.
 
