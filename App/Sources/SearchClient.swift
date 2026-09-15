@@ -38,8 +38,9 @@ actor SearchClient {
     func currentStatus() async -> ServiceStatus? { try? await status() }
 
     func resetConnection() {
-        connection?.invalidate()
+        let oldConnection = connection
         connection = nil
+        oldConnection?.invalidate()
     }
 
     func currentRules() async -> ExcludeRules {
@@ -100,16 +101,27 @@ actor SearchClient {
         // Connect only when the first request is made so a brand-new installation
         // cannot permanently capture an unavailable service before registration.
         let connection = activeConnection()
-        let replyData: Data = try await withCheckedThrowingContinuation { continuation in
-            let proxy = connection.remoteObjectProxyWithErrorHandler { error in
-                continuation.resume(throwing: error)
+        let replyData: Data
+        do {
+            replyData = try await withCheckedThrowingContinuation { continuation in
+                let proxy = connection.remoteObjectProxyWithErrorHandler { error in
+                    continuation.resume(throwing: error)
+                }
+                guard let service = proxy as? EverythingMacServiceProtocol else {
+                    continuation.resume(throwing: NSError(
+                        domain: "EverythingMac",
+                        code: 2,
+                        userInfo: [NSLocalizedDescriptionKey: "Search service unavailable"]
+                    ))
+                    return
+                }
+                service.perform(request) { continuation.resume(returning: $0) }
             }
-            guard let service = proxy as? EverythingMacServiceProtocol else {
-                continuation.resume(throwing: NSError(domain: "EverythingMac", code: 2,
-                                                       userInfo: [NSLocalizedDescriptionKey: "Search service unavailable"]))
-                return
+        } catch {
+            if self.connection === connection {
+                resetConnection()
             }
-            service.perform(request) { continuation.resume(returning: $0) }
+            throw error
         }
         let envelope = try JSONDecoder().decode(ServiceReply.self, from: replyData)
         if let error = envelope.error {

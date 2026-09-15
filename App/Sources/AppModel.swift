@@ -45,11 +45,8 @@ final class AppModel: ObservableObject {
     private var bootstrapTask: Task<Void, Never>?
     private var maintenanceTask: Task<Void, Never>?
     private var accessGeneration: UInt64 = 0
-    func refreshFullDiskAccess(restartServicesIfDenied: Bool = false) async -> Bool {
-        guard let status = await index.currentStatus() else {
-            updateFullDiskAccess(false)
-            return false
-        }
+    func refreshFullDiskAccess(restartServicesIfDenied: Bool = false) async -> Bool? {
+        guard let status = await waitForServiceStatus() else { return nil }
         if status.hasFullDiskAccess {
             publish(status)
             return true
@@ -62,25 +59,27 @@ final class AppModel: ObservableObject {
 
         await index.resetConnection()
         guard BackgroundServices.restartAfterFullDiskAccessChange() else {
-            updateFullDiskAccess(false)
-            return false
+            return nil
         }
 
-        let granted = await waitForRestartedServiceAccess()
-        updateFullDiskAccess(granted)
-        return granted
+        return await waitForRestartedServiceAccess()
     }
 
-    private func waitForRestartedServiceAccess() async -> Bool {
-        for attempt in 0..<5 {
-            if attempt > 0 { try? await Task.sleep(nanoseconds: 200_000_000) }
-            if let status = await index.currentStatus(), status.hasFullDiskAccess {
-                publish(status)
-                return true
-            }
+    private func waitForServiceStatus(attempts: Int = 5) async -> ServiceStatus? {
+        for attempt in 0..<attempts {
+            if let status = await index.currentStatus() { return status }
             await index.resetConnection()
+            if attempt + 1 < attempts {
+                try? await Task.sleep(nanoseconds: 200_000_000)
+            }
         }
-        return false
+        return nil
+    }
+
+    private func waitForRestartedServiceAccess() async -> Bool? {
+        guard let status = await waitForServiceStatus(attempts: 10) else { return nil }
+        publish(status)
+        return status.hasFullDiskAccess
     }
 
     private func publish(_ status: ServiceStatus) {

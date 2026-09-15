@@ -2,24 +2,40 @@ import SwiftUI
 import IndexCore
 
 struct ContentView: View {
+    private enum AccessState {
+        case checking
+        case granted
+        case denied
+        case serviceUnavailable
+    }
+
     @EnvironmentObject var model: AppModel
     @Environment(\.scenePhase) private var scenePhase
-    @State private var fdaGranted = true
+    @State private var accessState = AccessState.checking
     @State private var refreshServicesAfterSettings = false
     @FocusState private var searchFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            if !fdaGranted {
+            if accessState == .denied {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text("Add EverythingMac Indexing Service to Full Disk Access.")
+                    Text("Grant Full Disk Access to EverythingMac.")
                     Spacer()
-                    Button("Show Service") { FullDiskAccess.showIndexingService() }
                     Button("Open Settings") {
                         refreshServicesAfterSettings = true
                         FullDiskAccess.openSettings()
                     }
+                }
+                .padding(8)
+                .background(.yellow.opacity(0.2))
+                Divider()
+            } else if accessState == .serviceUnavailable {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text("EverythingMac's background services aren't responding.")
+                    Spacer()
+                    Button("Retry") { refreshAccess() }
                 }
                 .padding(8)
                 .background(.yellow.opacity(0.2))
@@ -38,7 +54,7 @@ struct ContentView: View {
                              onSort: { k, a in model.setSort(k, ascending: a) },
                              onSelect: { model.select($0) },
                              onActivate: { ResultActions.open($0) })
-                if fdaGranted && model.total == 0 && model.results.isEmpty {
+                if accessState != .denied && model.total == 0 && model.results.isEmpty {
                     HStack(spacing: 10) {
                         ProgressView()
                             .controlSize(.small)
@@ -76,7 +92,11 @@ struct ContentView: View {
             let granted = await model.refreshFullDiskAccess(
                 restartServicesIfDenied: restartServicesIfDenied
             )
-            fdaGranted = granted
+            guard let granted else {
+                accessState = .serviceUnavailable
+                return
+            }
+            accessState = granted ? .granted : .denied
         }
     }
 }

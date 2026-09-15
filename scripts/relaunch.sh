@@ -12,7 +12,7 @@ sleep 1
 CACHE="$HOME/Library/Application Support/EverythingMac/index.idx"
 : > "$CACHE" 2>/dev/null || true   # truncate (not rm) → load fails → full rescan
 
-launchctl kickstart -k "gui/$(id -u)/com.everythingmac.indexing-service" 2>/dev/null || true
+launchctl kickstart -k "gui/$(id -u)/com.everythingmac.indexing-agent" 2>/dev/null || true
 launchctl kickstart -k "gui/$(id -u)/com.everythingmac.search" 2>/dev/null || true
 
 open "/Applications/EverythingMac.app"

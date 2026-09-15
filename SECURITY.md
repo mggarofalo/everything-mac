@@ -26,10 +26,10 @@ EverythingMac does not index file contents. Full Disk Access still gives the ind
 
 ## Full Disk Access belongs to the indexer
 
-Only the background-only `EverythingMac Indexing Service` app needs Full Disk
-Access. The main app and `EverythingMacSearchService` do not request it. The
-indexer uses its own `com.everythingmac.indexer` signing identifier so macOS can
-authorize it independently.
+Only `EverythingMacIndexingService` uses Full Disk Access. The main app and
+`EverythingMacSearchService` do not read protected files themselves. The
+indexer intentionally shares the app's `com.everythingmac.app` signing
+identifier so one visible EverythingMac grant covers the product.
 
 The indexer checks access before loading or building the index. macOS enforces access to protected paths. Revoking Full Disk Access stops future protected filesystem reads, but it does not erase metadata already stored in the cache. Remove the app to run automatic cleanup, or delete the cache manually.
 
@@ -60,9 +60,9 @@ EverythingMac.app → EverythingMacSearchService → EverythingMacIndexingServic
 Each XPC listener validates the connecting process with Security.framework. It requires the expected executable identifier and the same signing team as the receiving process. A process running under the same user account is not accepted on that fact alone.
 
 The search service accepts `com.everythingmac.app`. The indexer accepts
-`EverythingMacSearchService`. The indexer's own signing identifier is
-`com.everythingmac.indexer`. Changes to these signing identifiers must update
-the trust policy and packaging checks together.
+`EverythingMacSearchService` and shares `com.everythingmac.app` with the main
+application for Full Disk Access. Changes to these signing identifiers must
+update the trust policy and packaging checks together.
 
 ## File actions require current identity
 
