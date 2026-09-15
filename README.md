@@ -21,6 +21,11 @@ takes effect.
 
 EverythingMac shows a loading panel while the services start. The status bar reports progress once the first scan begins. Later launches load the saved index and replay filesystem changes.
 
+If macOS has disabled the app's background activity, EverythingMac links to
+`System Settings > General > Login Items & Extensions`, where its background
+activity can be enabled again. An unresponsive registered service is repaired
+and restarted automatically when the app retries the connection.
+
 ## Search for files
 
 Enter any part of a file or folder name. Use the sliders button beside the search field to enable `Match Path`, `Match Case`, or `Match Whole Word`.

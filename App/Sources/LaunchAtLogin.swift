@@ -2,12 +2,19 @@ import Foundation
 import ServiceManagement
 
 @MainActor enum BackgroundServices {
+    enum Availability: Equatable {
+        case enabled
+        case requiresApproval
+        case unavailable
+    }
+
     // Bump this when an embedded launch-agent plist changes in a way that an
     // existing SMAppService registration must reload. Revision 1 migrated the
     // renamed executable; revisions 2 and 3 briefly moved the indexer into an
     // app-like wrapper. Revision 4 restores the shared signing identity used by
-    // the single EverythingMac Full Disk Access grant.
-    private static let registrationRevision = 4
+    // the single EverythingMac Full Disk Access grant. Revision 5 proactively
+    // refreshes registrations that a 0.9.4 upgrade may have left unresponsive.
+    private static let registrationRevision = 5
     private static let registrationRevisionKey = "services.registrationRevision"
     private static let services = [
         SMAppService.agent(plistName: "com.everythingmac.indexing-agent.plist"),
@@ -15,6 +22,13 @@ import ServiceManagement
     ]
 
     static var areEnabled: Bool { services.allSatisfy { $0.status == .enabled } }
+    static var availability: Availability {
+        if areEnabled { return .enabled }
+        if services.contains(where: { $0.status == .requiresApproval }) {
+            return .requiresApproval
+        }
+        return .unavailable
+    }
     static var statusText: String {
         services.map { service in
             switch service.status {
@@ -42,7 +56,6 @@ import ServiceManagement
             } catch {
                 NSLog("EverythingMac could not remove an obsolete indexing service: %@",
                       error.localizedDescription)
-                return
             }
         }
 
@@ -80,9 +93,27 @@ import ServiceManagement
         }
     }
 
+    /// Reconcile registration and restart enabled agents after an XPC lookup
+    /// fails. Retrying the same connection cannot repair a missing or stale
+    /// launchd job, which is common after an in-place application upgrade.
+    static func recoverAfterConnectionFailure() -> Availability {
+        install()
+        guard availability == .enabled else { return availability }
+        _ = restartEnabledServices()
+        return availability
+    }
+
+    static func openApprovalSettings() {
+        SMAppService.openSystemSettingsLoginItems()
+    }
+
     static func restartAfterFullDiskAccessChange() -> Bool {
         guard areEnabled else { return false }
 
+        return restartEnabledServices()
+    }
+
+    private static func restartEnabledServices() -> Bool {
         for service in services.reversed() {
             do {
                 try service.unregister()
