@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.9.6
+
+- Stop shipping two retired indexing-agent plists that could retain disabled
+  Background Task Management records, claim the current indexer's Mach service,
+  and leave the app connected to a dead endpoint after an upgrade.
+- Unregister both retired records regardless of their reported service status.
+
 ## 0.9.5
 
 - Make the Retry action repair and restart missing or stale background-service

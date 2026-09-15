@@ -65,6 +65,11 @@ The services are user launch agents registered through `SMAppService`. Quitting 
 
 `BackgroundServices.registrationRevision` reloads stored launch-agent definitions after an embedded plist or executable-path change. Bump it whenever an existing registration must be replaced. Refresh both services together because the search service retains its connection to the indexing service.
 
+For service migration diagnostics, treat `sfltool dumpbtm` as authoritative for
+Background Task Management disposition. `launchctl print-disabled` reporting a
+label as enabled means only that it is not explicitly disabled in launchd and
+can contradict a disabled BTM record.
+
 ## Preserve index correctness
 
 `IndexActor` serializes mutable index state. Whole-disk scans and large derived-index builds may run outside the actor, but publish completed state atomically. Do not expose partially built stores to searches.

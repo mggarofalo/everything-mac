@@ -14,7 +14,9 @@ import ServiceManagement
     // app-like wrapper. Revision 4 restores the shared signing identity used by
     // the single EverythingMac Full Disk Access grant. Revision 5 proactively
     // refreshes registrations that a 0.9.4 upgrade may have left unresponsive.
-    private static let registrationRevision = 5
+    // Revision 6 removes disabled Background Task Management records for both
+    // retired indexer labels, which used the current indexer's Mach service.
+    private static let registrationRevision = 6
     private static let registrationRevisionKey = "services.registrationRevision"
     private static let services = [
         SMAppService.agent(plistName: "com.everythingmac.indexing-agent.plist"),
@@ -50,7 +52,7 @@ import ServiceManagement
         ]
         try? legacyMain.unregister()
         try? legacyHelper.unregister()
-        for obsoleteIndexer in obsoleteIndexers where obsoleteIndexer.status == .enabled {
+        for obsoleteIndexer in obsoleteIndexers {
             do {
                 try obsoleteIndexer.unregister()
             } catch {

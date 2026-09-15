@@ -34,8 +34,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.app
         PRODUCT_NAME: EverythingMacIndexingService
-        MARKETING_VERSION: "0.9.5"
-        CURRENT_PROJECT_VERSION: "22"
+        MARKETING_VERSION: "0.9.6"
+        CURRENT_PROJECT_VERSION: "23"
         SKIP_INSTALL: YES
         SWIFT_VERSION: "6.0"
         CODE_SIGN_STYLE: Manual
@@ -85,15 +85,11 @@ targets:
           - "$(BUILT_PRODUCTS_DIR)/EverythingMacIndexingService"
           - "$(BUILT_PRODUCTS_DIR)/EverythingMacSearchService"
           - "$(SRCROOT)/LaunchAgents/com.everythingmac.indexing-agent.plist"
-          - "$(SRCROOT)/LaunchAgents/com.everythingmac.indexing-service.plist"
-          - "$(SRCROOT)/LaunchAgents/com.everythingmac.indexer.plist"
           - "$(SRCROOT)/LaunchAgents/com.everythingmac.search.plist"
         outputFiles:
           - "$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/MacOS/EverythingMacIndexingService"
           - "$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/MacOS/EverythingMacSearchService"
           - "$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library/LaunchAgents/com.everythingmac.indexing-agent.plist"
-          - "$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library/LaunchAgents/com.everythingmac.indexing-service.plist"
-          - "$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library/LaunchAgents/com.everythingmac.indexer.plist"
           - "$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/Library/LaunchAgents/com.everythingmac.search.plist"
         script: |
           set -euo pipefail
@@ -106,14 +102,12 @@ targets:
             /usr/bin/codesign --force --sign "${EXPANDED_CODE_SIGN_IDENTITY}" --identifier com.everythingmac.app --options runtime "${executable_dir}/EverythingMacIndexingService"
           fi
           ditto "${SRCROOT}/LaunchAgents/com.everythingmac.indexing-agent.plist" "${agent_dir}/com.everythingmac.indexing-agent.plist"
-          ditto "${SRCROOT}/LaunchAgents/com.everythingmac.indexing-service.plist" "${agent_dir}/com.everythingmac.indexing-service.plist"
-          ditto "${SRCROOT}/LaunchAgents/com.everythingmac.indexer.plist" "${agent_dir}/com.everythingmac.indexer.plist"
           ditto "${SRCROOT}/LaunchAgents/com.everythingmac.search.plist" "${agent_dir}/com.everythingmac.search.plist"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.app
-        MARKETING_VERSION: "0.9.5"
-        CURRENT_PROJECT_VERSION: "22"
+        MARKETING_VERSION: "0.9.6"
+        CURRENT_PROJECT_VERSION: "23"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: EverythingMac.entitlements
         SWIFT_VERSION: "6.0"
