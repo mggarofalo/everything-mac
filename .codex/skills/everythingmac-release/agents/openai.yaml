@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release EverythingMac"
+  short_description: "Build, publish, and install an EverythingMac release"
+  default_prompt: "Release EverythingMac with the correct version bump, validation, signing, publication, and local installation."

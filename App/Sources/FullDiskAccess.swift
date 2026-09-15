@@ -25,6 +25,9 @@ enum FullDiskAccess {
     }
 
     static func openSettings() {
-        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles")!)
+        guard let url = URL(
+            string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles"
+        ) else { return }
+        NSWorkspace.shared.open(url)
     }
 }

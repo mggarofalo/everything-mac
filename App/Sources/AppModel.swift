@@ -45,17 +45,55 @@ final class AppModel: ObservableObject {
     private var bootstrapTask: Task<Void, Never>?
     private var maintenanceTask: Task<Void, Never>?
     private var accessGeneration: UInt64 = 0
+    private var didRestartServicesForAccess = false
 
-    func refreshServiceAccess() {
-        Task {
-            guard let status = await index.currentStatus() else {
-                updateFullDiskAccess(false)
-                return
-            }
-            updateFullDiskAccess(status.hasFullDiskAccess)
-            scanning = status.scanning
-            total = status.totalCount
+    func refreshFullDiskAccess(restartServicesIfDenied: Bool = false) async -> Bool {
+        guard let status = await index.currentStatus() else {
+            updateFullDiskAccess(false)
+            return false
         }
+        if status.hasFullDiskAccess {
+            publish(status)
+            return true
+        }
+
+        let applicationHasAccess = FullDiskAccess.isGranted()
+        if !applicationHasAccess { didRestartServicesForAccess = false }
+        let shouldRestart = restartServicesIfDenied
+            || (applicationHasAccess && !didRestartServicesForAccess)
+        guard shouldRestart else {
+            publish(status)
+            return false
+        }
+
+        didRestartServicesForAccess = true
+        await index.resetConnection()
+        guard BackgroundServices.restartAfterFullDiskAccessChange() else {
+            updateFullDiskAccess(false)
+            return false
+        }
+
+        let granted = await waitForRestartedServiceAccess()
+        updateFullDiskAccess(granted)
+        return granted
+    }
+
+    private func waitForRestartedServiceAccess() async -> Bool {
+        for attempt in 0..<5 {
+            if attempt > 0 { try? await Task.sleep(nanoseconds: 200_000_000) }
+            if let status = await index.currentStatus(), status.hasFullDiskAccess {
+                publish(status)
+                return true
+            }
+            await index.resetConnection()
+        }
+        return false
+    }
+
+    private func publish(_ status: ServiceStatus) {
+        updateFullDiskAccess(status.hasFullDiskAccess)
+        scanning = status.scanning
+        total = status.totalCount
     }
 
     func updateFullDiskAccess(_ granted: Bool) {
