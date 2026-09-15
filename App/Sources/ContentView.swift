@@ -13,8 +13,9 @@ struct ContentView: View {
             if !fdaGranted {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text("Grant Full Disk Access to EverythingMac.")
+                    Text("Add EverythingMac Indexing Service to Full Disk Access.")
                     Spacer()
+                    Button("Show Service") { FullDiskAccess.showIndexingService() }
                     Button("Open Settings") {
                         refreshServicesAfterSettings = true
                         FullDiskAccess.openSettings()

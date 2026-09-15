@@ -156,7 +156,7 @@ private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
 
     func listener(_ listener: NSXPCListener,
                   shouldAcceptNewConnection connection: NSXPCConnection) -> Bool {
-        guard ConnectionTrust.accepts(connection, identifiers: ["EverythingMacSearchService"]) else {
+        guard ConnectionTrust.accepts(connection, identifiers: [searchServiceSigningIdentifier]) else {
             return false
         }
         connection.exportedInterface = NSXPCInterface(with: EverythingMacServiceProtocol.self)

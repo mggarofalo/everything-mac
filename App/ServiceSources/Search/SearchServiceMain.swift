@@ -29,7 +29,7 @@ private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
 
     func listener(_ listener: NSXPCListener,
                   shouldAcceptNewConnection connection: NSXPCConnection) -> Bool {
-        guard ConnectionTrust.accepts(connection, identifiers: ["com.everythingmac.app"]) else {
+        guard ConnectionTrust.accepts(connection, identifiers: [appSigningIdentifier]) else {
             return false
         }
         connection.exportedInterface = NSXPCInterface(with: EverythingMacServiceProtocol.self)

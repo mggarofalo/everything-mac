@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.9.3
+
+- Package the indexing agent as a distinct background application so macOS can
+  grant Full Disk Access to the process that actually scans files, and provide
+  a Finder shortcut to that nested service from the permission banner.
+
 ## 0.9.2
 
 - Restart the persistent indexing and search agents after Full Disk Access is

@@ -57,7 +57,10 @@ enum ApplicationBundleMonitor {
     private static func containingAppURL(for executableURL: URL) -> URL? {
         var candidate = executableURL.deletingLastPathComponent()
         while candidate.path != "/" {
-            if candidate.pathExtension == "app" { return candidate }
+            if candidate.pathExtension == "app",
+               Bundle(url: candidate)?.bundleIdentifier == appSigningIdentifier {
+                return candidate
+            }
             candidate.deleteLastPathComponent()
         }
         return nil
@@ -68,6 +71,7 @@ private final class RemovalObserver: @unchecked Sendable {
     private let appURL: URL
     private let parentPID: pid_t
     private let services = [
+        SMAppService.agent(plistName: "com.everythingmac.indexing-service.plist"),
         SMAppService.agent(plistName: "com.everythingmac.indexer.plist"),
         SMAppService.agent(plistName: "com.everythingmac.search.plist"),
     ]
@@ -139,7 +143,7 @@ private final class RemovalObserver: @unchecked Sendable {
             // indexer may continue running its old inode until launchd next restarts it.
             let process = Process()
             process.executableURL = appURL.appendingPathComponent(
-                "Contents/MacOS/EverythingMacIndexingService"
+                "Contents/Library/LoginItems/EverythingMacIndexingService.app/Contents/MacOS/EverythingMacIndexingService"
             )
             process.arguments = [
                 ApplicationBundleMonitor.observerArgument,

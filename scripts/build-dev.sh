@@ -47,11 +47,13 @@ if grep -q 'com.apple.security.get-task-allow' <<<"$SIGNATURE"; then
   echo "Refusing to install a build with get-task-allow." >&2
   exit 1
 fi
-for service_spec in "EverythingMacIndexingService:com.everythingmac.app" \
-                    "EverythingMacSearchService:EverythingMacSearchService"; do
-  service_name="${service_spec%%:*}"
+for service_spec in \
+  "Contents/Library/LoginItems/EverythingMacIndexingService.app:com.everythingmac.indexer" \
+  "Contents/MacOS/EverythingMacSearchService:EverythingMacSearchService"; do
+  service_path="${service_spec%%:*}"
   expected_identifier="${service_spec#*:}"
-  service_signature="$(codesign -dvv "$APP/Contents/MacOS/$service_name" 2>&1)"
+  service_name="${service_path##*/}"
+  service_signature="$(codesign -dvv "$APP/$service_path" 2>&1)"
   grep -q "Identifier=${expected_identifier}" <<<"$service_signature" || {
     echo "Refusing to install $service_name with an unexpected signing identifier." >&2
     exit 1
@@ -85,13 +87,14 @@ fi
 # Registered agents survive UI quits and app replacements. Restart registrations
 # that already point at the current executables. A stale registration can make
 # kickstart wait indefinitely; launching the UI refreshes it through SMAppService.
-for service_spec in "com.everythingmac.indexer:EverythingMacIndexingService" \
-                    "com.everythingmac.search:EverythingMacSearchService"; do
+for service_spec in \
+  "com.everythingmac.indexing-service:Contents/Library/LoginItems/EverythingMacIndexingService.app/Contents/MacOS/EverythingMacIndexingService" \
+  "com.everythingmac.search:Contents/MacOS/EverythingMacSearchService"; do
   service_label="${service_spec%%:*}"
-  service_name="${service_spec#*:}"
+  service_path="${service_spec#*:}"
   service_domain="gui/$(id -u)/${service_label}"
   registered_service="$(launchctl print "$service_domain" 2>/dev/null || true)"
-  if grep -Fq "program identifier = Contents/MacOS/${service_name}" \
+  if grep -Fq "program identifier = ${service_path}" \
       <<<"$registered_service"; then
     launchctl kickstart -k "$service_domain" 2>/dev/null || true
   elif [[ -n "$registered_service" ]]; then

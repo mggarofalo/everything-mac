@@ -3,6 +3,14 @@ import IndexCore
 import XCTest
 
 final class ServiceProtocolTests: XCTestCase {
+    func testSigningIdentifiersRemainDistinct() {
+        XCTAssertEqual(appSigningIdentifier, "com.everythingmac.app")
+        XCTAssertEqual(indexingServiceSigningIdentifier, "com.everythingmac.indexer")
+        XCTAssertEqual(searchServiceSigningIdentifier, "EverythingMacSearchService")
+        XCTAssertEqual(Set([appSigningIdentifier, indexingServiceSigningIdentifier,
+                            searchServiceSigningIdentifier]).count, 3)
+    }
+
     func testEveryOperationRoundTrips() throws {
         for operation in [ServiceOperation.status, .search, .cancelSearch, .rebuild,
                           .getRules, .setRules] {
