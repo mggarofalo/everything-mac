@@ -29,7 +29,7 @@ app_dir="$repo_dir/App"
 build_dir="$app_dir/build"
 dist_dir="$repo_dir/dist"
 app="$build_dir/Build/Products/Release/EverythingMac.app"
-indexing_service="$app/Contents/MacOS/EverythingMacIndexingService"
+indexing_service="$app/Contents/Library/LoginItems/EverythingMacIndexingService.app"
 search_service="$app/Contents/MacOS/EverythingMacSearchService"
 
 if [[ "$mode" == "preview" ]]; then
@@ -76,7 +76,7 @@ xcodebuild -project EverythingMac.xcodeproj -scheme EverythingMac \
 
 # Sign inside out. The explicit identifiers are part of the XPC trust policy.
 codesign --force --options runtime "${timestamp_option[@]}" \
-  --identifier com.everythingmac.app --sign "$sign_identity" "$indexing_service"
+  --identifier com.everythingmac.indexer --sign "$sign_identity" "$indexing_service"
 codesign --force --options runtime "${timestamp_option[@]}" \
   --identifier EverythingMacSearchService --sign "$sign_identity" "$search_service"
 codesign --force --options runtime "${timestamp_option[@]}" \

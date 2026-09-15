@@ -3,12 +3,14 @@ import ServiceManagement
 
 @MainActor enum BackgroundServices {
     // Bump this when an embedded launch-agent plist changes in a way that an
-    // existing SMAppService registration must reload. Registration revision 1
-    // migrates the renamed indexing-service executable.
-    private static let registrationRevision = 1
+    // existing SMAppService registration must reload. Revision 1 migrated the
+    // renamed executable; revision 2 moves the indexer into an app-like wrapper;
+    // revision 3 gives that wrapper a fresh launchd registration so its distinct
+    // signing requirement is not inherited from the former raw executable.
+    private static let registrationRevision = 3
     private static let registrationRevisionKey = "services.registrationRevision"
     private static let services = [
-        SMAppService.agent(plistName: "com.everythingmac.indexer.plist"),
+        SMAppService.agent(plistName: "com.everythingmac.indexing-service.plist"),
         SMAppService.agent(plistName: "com.everythingmac.search.plist"),
     ]
 
@@ -28,8 +30,12 @@ import ServiceManagement
     static func install() {
         let legacyMain = SMAppService.mainApp
         let legacyHelper = SMAppService.loginItem(identifier: "com.everythingmac.loginhelper")
+        let legacyIndexer = SMAppService.agent(plistName: "com.everythingmac.indexer.plist")
         try? legacyMain.unregister()
         try? legacyHelper.unregister()
+        if legacyIndexer.status == .enabled {
+            try? legacyIndexer.unregister()
+        }
 
         let defaults = UserDefaults.standard
         let needsRefresh = defaults.integer(forKey: registrationRevisionKey)

@@ -3,6 +3,9 @@ import IndexCore
 
 let indexMachServiceName = "com.everythingmac.indexer"
 let searchMachServiceName = "com.everythingmac.search"
+let appSigningIdentifier = "com.everythingmac.app"
+let indexingServiceSigningIdentifier = "com.everythingmac.indexer"
+let searchServiceSigningIdentifier = "EverythingMacSearchService"
 let indexChangedNotification = Notification.Name("com.everythingmac.index-changed")
 let indexProgressNotification = Notification.Name("com.everythingmac.index-progress")
 

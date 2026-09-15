@@ -45,8 +45,6 @@ final class AppModel: ObservableObject {
     private var bootstrapTask: Task<Void, Never>?
     private var maintenanceTask: Task<Void, Never>?
     private var accessGeneration: UInt64 = 0
-    private var didRestartServicesForAccess = false
-
     func refreshFullDiskAccess(restartServicesIfDenied: Bool = false) async -> Bool {
         guard let status = await index.currentStatus() else {
             updateFullDiskAccess(false)
@@ -57,16 +55,11 @@ final class AppModel: ObservableObject {
             return true
         }
 
-        let applicationHasAccess = FullDiskAccess.isGranted()
-        if !applicationHasAccess { didRestartServicesForAccess = false }
-        let shouldRestart = restartServicesIfDenied
-            || (applicationHasAccess && !didRestartServicesForAccess)
-        guard shouldRestart else {
+        guard restartServicesIfDenied else {
             publish(status)
             return false
         }
 
-        didRestartServicesForAccess = true
         await index.resetConnection()
         guard BackgroundServices.restartAfterFullDiskAccessChange() else {
             updateFullDiskAccess(false)

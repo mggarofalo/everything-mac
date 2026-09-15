@@ -2,6 +2,9 @@ import Foundation
 import AppKit
 
 enum FullDiskAccess {
+    static let indexingServiceRelativePath =
+        "Contents/Library/LoginItems/EverythingMacIndexingService.app"
+
     // Reliable probe: the TCC database is readable ONLY by an app with Full Disk
     // Access. Opening it for reading performs the protected open() that TCC gates,
     // so a non-FDA app gets nil here. (The old ~/Library/Mail check false-positived
@@ -29,5 +32,13 @@ enum FullDiskAccess {
             string: "x-apple.systempreferences:com.apple.settings.PrivacySecurity.extension?Privacy_AllFiles"
         ) else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    static func showIndexingService() {
+        let url = Bundle.main.bundleURL.appendingPathComponent(
+            indexingServiceRelativePath,
+            isDirectory: true
+        )
+        NSWorkspace.shared.activateFileViewerSelecting([url])
     }
 }
