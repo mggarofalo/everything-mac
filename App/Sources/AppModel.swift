@@ -2,6 +2,13 @@ import SwiftUI
 import IndexCore
 import Combine
 
+enum ServiceAccessState {
+    case granted
+    case denied
+    case backgroundApprovalRequired
+    case serviceUnavailable
+}
+
 @MainActor
 final class AppModel: ObservableObject {
     @Published var query = ""
@@ -45,24 +52,45 @@ final class AppModel: ObservableObject {
     private var bootstrapTask: Task<Void, Never>?
     private var maintenanceTask: Task<Void, Never>?
     private var accessGeneration: UInt64 = 0
-    func refreshFullDiskAccess(restartServicesIfDenied: Bool = false) async -> Bool? {
-        guard let status = await waitForServiceStatus() else { return nil }
+    func refreshFullDiskAccess(
+        restartServicesIfDenied: Bool = false
+    ) async -> ServiceAccessState {
+        guard let status = await waitForServiceStatus() else {
+            return await recoverBackgroundServices()
+        }
         if status.hasFullDiskAccess {
             publish(status)
-            return true
+            return .granted
         }
 
         guard restartServicesIfDenied else {
             publish(status)
-            return false
+            return .denied
         }
 
         await index.resetConnection()
         guard BackgroundServices.restartAfterFullDiskAccessChange() else {
-            return nil
+            return serviceFailureState
         }
 
         return await waitForRestartedServiceAccess()
+    }
+
+    private func recoverBackgroundServices() async -> ServiceAccessState {
+        await index.resetConnection()
+        switch BackgroundServices.recoverAfterConnectionFailure() {
+        case .enabled:
+            return await waitForRestartedServiceAccess(attempts: 30)
+        case .requiresApproval:
+            return .backgroundApprovalRequired
+        case .unavailable:
+            return .serviceUnavailable
+        }
+    }
+
+    private var serviceFailureState: ServiceAccessState {
+        BackgroundServices.availability == .requiresApproval
+            ? .backgroundApprovalRequired : .serviceUnavailable
     }
 
     private func waitForServiceStatus(attempts: Int = 5) async -> ServiceStatus? {
@@ -76,10 +104,12 @@ final class AppModel: ObservableObject {
         return nil
     }
 
-    private func waitForRestartedServiceAccess() async -> Bool? {
-        guard let status = await waitForServiceStatus(attempts: 10) else { return nil }
+    private func waitForRestartedServiceAccess(attempts: Int = 10) async -> ServiceAccessState {
+        guard let status = await waitForServiceStatus(attempts: attempts) else {
+            return serviceFailureState
+        }
         publish(status)
-        return status.hasFullDiskAccess
+        return status.hasFullDiskAccess ? .granted : .denied
     }
 
     private func publish(_ status: ServiceStatus) {

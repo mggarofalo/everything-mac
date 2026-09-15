@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.9.5
+
+- Make the Retry action repair and restart missing or stale background-service
+  registrations after an upgrade, and continue migration if removing one
+  obsolete registration fails.
+- Distinguish a disabled Background Activity item from an unresponsive service
+  and link directly to Login Items when user approval is required.
+
 ## 0.9.4
 
 - Restore the single EverythingMac Full Disk Access entry shared by the app and

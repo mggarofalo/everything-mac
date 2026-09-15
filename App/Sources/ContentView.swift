@@ -6,6 +6,7 @@ struct ContentView: View {
         case checking
         case granted
         case denied
+        case backgroundApprovalRequired
         case serviceUnavailable
     }
 
@@ -26,6 +27,16 @@ struct ContentView: View {
                         refreshServicesAfterSettings = true
                         FullDiskAccess.openSettings()
                     }
+                }
+                .padding(8)
+                .background(.yellow.opacity(0.2))
+                Divider()
+            } else if accessState == .backgroundApprovalRequired {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text("Allow EverythingMac to run in the background.")
+                    Spacer()
+                    Button("Open Login Items") { BackgroundServices.openApprovalSettings() }
                 }
                 .padding(8)
                 .background(.yellow.opacity(0.2))
@@ -89,14 +100,15 @@ struct ContentView: View {
 
     private func refreshAccess(restartServicesIfDenied: Bool = false) {
         Task {
-            let granted = await model.refreshFullDiskAccess(
+            let result = await model.refreshFullDiskAccess(
                 restartServicesIfDenied: restartServicesIfDenied
             )
-            guard let granted else {
-                accessState = .serviceUnavailable
-                return
+            switch result {
+            case .granted: accessState = .granted
+            case .denied: accessState = .denied
+            case .backgroundApprovalRequired: accessState = .backgroundApprovalRequired
+            case .serviceUnavailable: accessState = .serviceUnavailable
             }
-            accessState = granted ? .granted : .denied
         }
     }
 }
