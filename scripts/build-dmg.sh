@@ -11,8 +11,10 @@ Usage: ./scripts/build-dmg.sh [--preview | --release]
              trust this artifact on another Mac.
 
   --release  Sign with Developer ID, notarize, staple, and assess the DMG.
-             This is the default and requires DEVELOPER_ID plus a notarytool
-             keychain profile (NOTARY_PROFILE defaults to "notary").
+             This is the default and requires DEVELOPER_TEAM_ID plus a
+             notarytool Keychain profile (NOTARY_PROFILE defaults to
+             "everythingmac-notary"). Set DEVELOPER_ID only to disambiguate
+             multiple valid identities for the same team.
 EOF
 }
 
@@ -43,15 +45,45 @@ if [[ "$mode" == "preview" ]]; then
   artifact_suffix="-preview"
   timestamp_option=(--timestamp=none)
 else
-  sign_identity="${DEVELOPER_ID:-}"
-  [[ -n "$sign_identity" ]] || {
-    echo "Set DEVELOPER_ID to a Developer ID Application identity." >&2
+  developer_team_id="${DEVELOPER_TEAM_ID:-}"
+  [[ "$developer_team_id" =~ ^[A-Z0-9]{10}$ ]] || {
+    echo "DEVELOPER_TEAM_ID must be the 10-character Apple Developer Team ID." >&2
     exit 1
   }
-  [[ "$sign_identity" == "Developer ID Application:"* ]] || {
-    echo "DEVELOPER_ID must name a Developer ID Application certificate." >&2
+
+  identities=()
+  while IFS= read -r identity; do
+    if [[ "$identity" == *"($developer_team_id)" ]]; then
+      identities+=("$identity")
+    fi
+  done < <(
+    security find-identity -v -p codesigning \
+      | sed -n 's/.*"\(Developer ID Application:[^"]*\)".*/\1/p'
+  )
+
+  if [[ -n "${DEVELOPER_ID:-}" ]]; then
+    sign_identity="$DEVELOPER_ID"
+    [[ "$sign_identity" == "Developer ID Application:"*"($developer_team_id)" ]] || {
+      echo "DEVELOPER_ID must be a Developer ID Application identity for team $developer_team_id." >&2
+      exit 1
+    }
+  elif (( ${#identities[@]} == 1 )); then
+    sign_identity="${identities[0]}"
+  elif (( ${#identities[@]} == 0 )); then
+    echo "No valid Developer ID Application identity for team $developer_team_id was found in Keychain." >&2
+    echo "Run ./scripts/configure-release-signing.sh after installing the certificate." >&2
     exit 1
-  }
+  else
+    echo "More than one Developer ID Application identity exists for team $developer_team_id." >&2
+    echo "Set DEVELOPER_ID to the exact identity to use:" >&2
+    printf '  %s\n' "${identities[@]}" >&2
+    exit 1
+  fi
+
+  notary_profile="${NOTARY_PROFILE:-everythingmac-notary}"
+  echo "Validating notarytool Keychain profile '$notary_profile'..."
+  xcrun notarytool history --keychain-profile "$notary_profile" --no-progress >/dev/null
+
   artifact_suffix=""
   timestamp_option=(--timestamp)
 fi
@@ -87,6 +119,15 @@ codesign --verify --strict --verbose=2 "$indexing_service"
 codesign --verify --strict --verbose=2 "$search_service"
 codesign --verify --strict --verbose=2 "$app"
 
+for signed_item in "$indexing_service" "$search_service" "$app"; do
+  signed_team="$(codesign -dvv "$signed_item" 2>&1 \
+    | sed -n 's/^TeamIdentifier=//p')"
+  [[ "$signed_team" == "${developer_team_id:-$signed_team}" ]] || {
+    echo "Unexpected signing team for $signed_item: $signed_team" >&2
+    exit 1
+  }
+done
+
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
 artifact_name="EverythingMac-${version}${artifact_suffix}.dmg"
 mkdir -p "$dist_dir"
@@ -97,12 +138,14 @@ rm -f "$dmg" "$checksum"
 stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/everythingmac-dmg.XXXXXX")"
 trap 'rm -rf "$stage_dir"' EXIT
 ditto "$app" "$stage_dir/EverythingMac.app"
+ditto "$repo_dir/LICENSE" "$stage_dir/LICENSE.txt"
 ln -s /Applications "$stage_dir/Applications"
 hdiutil create -volname "EverythingMac $version" -srcfolder "$stage_dir" \
   -format UDZO -ov "$dmg"
+codesign --force "${timestamp_option[@]}" --sign "$sign_identity" "$dmg"
+codesign --verify --strict --verbose=2 "$dmg"
 
 if [[ "$mode" == "release" ]]; then
-  notary_profile="${NOTARY_PROFILE:-notary}"
   xcrun notarytool submit "$dmg" --keychain-profile "$notary_profile" --wait
   xcrun stapler staple "$dmg"
   xcrun stapler validate "$dmg"

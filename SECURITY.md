@@ -76,7 +76,9 @@ Development and release scripts verify the app and embedded services before inst
 
 Local builds require an Apple Development identity. The install script requires hardened runtime, rejects the debug `get-task-allow` entitlement, checks service identifiers, stages a complete replacement bundle, and restores the previous bundle if verification fails.
 
-Public releases require a Developer ID Application identity. The release script signs components from the inside out, submits the DMG to Apple for notarization, staples the result, runs Gatekeeper assessment, and writes a SHA-256 checksum. Any failed step stops the release.
+Public releases require a Developer ID Application identity whose private key remains in macOS Keychain. Notarization uses an app-specific password stored in a separate `notarytool` Keychain profile. Neither credential belongs in the repository, shell history, environment, or GitHub Actions secrets.
+
+The release script validates both Keychain credentials before building. It signs components from the inside out, confirms their signing team, and includes the MIT license. It signs the outer DMG before submitting that container to Apple for notarization, then staples the result, runs Gatekeeper assessment, and writes a SHA-256 checksum. Any failed step stops the release.
 
 Preview DMGs use development signing and skip notarization. They are not public release artifacts.
 
