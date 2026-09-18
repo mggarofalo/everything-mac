@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.9.7
+
+- Keep Developer ID and notarization credentials in macOS Keychain, validate
+  both before release builds, and verify the signing team after signing.
+- Include the MIT license in release DMGs and document the local signing,
+  notarization, and GitHub publication workflow.
+- Sign the outer DMG before notarization so Gatekeeper can validate both the
+  distribution container and its embedded application.
+
 ## 0.9.6
 
 - Stop shipping two retired indexing-agent plists that could retain disabled

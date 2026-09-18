@@ -123,14 +123,36 @@ A preview DMG exercises the complete packaging flow with an Apple Development ce
 ./scripts/build-dmg.sh --preview
 ```
 
-A public build requires a Developer ID Application certificate and a `notarytool` keychain profile:
+A public build uses 2 credentials stored in macOS Keychain:
+
+- A Developer ID Application certificate and its private key.
+- A `notarytool` profile containing an app-specific password.
+
+Create the certificate in the Apple Developer portal using a certificate signing request from Keychain Access. Install the downloaded certificate on the release Mac. Its private key must remain in Keychain and must never be committed or copied into the repository.
+
+A Developer ID Application certificate identifies a developer team rather than one application. Reuse one certificate across applications built in the same trusted release environment. Use another certificate only when a separate machine, automation system, or organization needs an independent security boundary.
+
+Create an app-specific password at `appleid.apple.com`, then configure the notarization profile. The command prompts for that password securely, validates it with Apple, and saves it in Keychain:
 
 ```bash
-DEVELOPER_ID="Developer ID Application: Your Name (TEAMID)" \
+APPLE_ID="you@example.com" DEVELOPER_TEAM_ID="TEAMID" \
+  ./scripts/configure-release-signing.sh
+```
+
+Do not put the app-specific password on the command line or in an environment variable. This setup is required once per release Mac, and again when the password or certificate changes.
+
+Build the public artifact from a clean, tagged commit:
+
+```bash
+DEVELOPER_TEAM_ID="TEAMID" \
   ./scripts/build-dmg.sh --release
 ```
 
-Set `NOTARY_PROFILE` if the profile is not named `notary`. The script signs the services and app, creates the DMG, notarizes and staples it, checks it with Gatekeeper, and writes a SHA-256 checksum under `dist/`.
+Set `NOTARY_PROFILE` if the profile is not named `everythingmac-notary`. If Keychain contains more than one valid Developer ID Application identity for the team, set `DEVELOPER_ID` to the exact identity to use.
+
+The script validates both Keychain credentials before building. It signs the services and app, confirms the signing team, and adds the MIT license. It then signs the DMG, notarizes that outer container, staples the ticket, checks it with Gatekeeper, and writes a SHA-256 checksum under `dist/`.
+
+Publish the DMG and checksum on the GitHub Release whose tag matches the application version. Create the release as a draft, attach both files, verify them on another Mac, then publish it. Do not publish preview DMGs.
 
 ## Understand the components
 
