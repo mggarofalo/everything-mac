@@ -19,7 +19,7 @@ struct CLIOptions: Equatable {
       --format paths|json  Output format (default: paths)
       --null               Separate paths with NUL bytes
       --limit N            Maximum results, 1...10000 (default: 1000)
-      --timeout SECONDS    End-to-end deadline (default: 30)
+      --timeout SECONDS    End-to-end deadline, at most 3600 (default: 30)
       --match-path         Match ancestor path components
       --case-sensitive     Match case exactly
       --whole-word         Match whole words
@@ -83,7 +83,10 @@ struct CLIOptions: Equatable {
                 guard let value = Int(arguments[valueIndex]), (1...10_000).contains(value) else { throw CLIError.invalidArguments("`--limit` must be an integer from 1 to 10000.") }
                 limit = value
             case "--timeout":
-                guard let value = TimeInterval(arguments[valueIndex]), value > 0 else { throw CLIError.invalidArguments("`--timeout` must be positive seconds.") }
+                guard let value = TimeInterval(arguments[valueIndex]), value.isFinite,
+                      value > 0, value <= 3_600 else {
+                    throw CLIError.invalidArguments("`--timeout` must be finite seconds from 0 to 3600.")
+                }
                 timeout = value
             default: throw CLIError.invalidArguments("Unknown option `\(argument)`.")
             }
@@ -173,19 +176,20 @@ struct CLIRunner {
         let deadline = now().addingTimeInterval(timeout)
         do {
             let race = CLIResponseContinuation()
-            Task {
+            let searchTask = Task {
                 do {
                     race.complete(.success(try await transport.search(request, requestID: requestID, deadline: deadline)))
                 } catch {
                     race.complete(.failure(error))
                 }
             }
-            Task {
+            let timerTask = Task {
                 do {
                     try await Task.sleep(for: .seconds(timeout))
                     race.complete(.failure(CLIError.timeout))
                 } catch { }
             }
+            defer { searchTask.cancel(); timerTask.cancel() }
             return try await withTaskCancellationHandler(operation: {
                 try await race.wait()
             }, onCancel: {

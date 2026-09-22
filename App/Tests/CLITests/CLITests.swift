@@ -51,6 +51,18 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(transport.searches, 0)
     }
 
+    func testNonfiniteAndExcessiveTimeoutsExitTwoWithoutConnecting() async {
+        let transport = MockTransport()
+        for timeout in ["inf", "1e309", "1e308", "3600.001", "-1"] {
+            let result = await CLIRunner(transport: transport).run(
+                arguments: ["search", "--timeout", timeout, "--", "a"]
+            )
+            XCTAssertEqual(result.exitCode, 2, timeout)
+            XCTAssertTrue(result.stdout.isEmpty, timeout)
+        }
+        XCTAssertEqual(transport.searches, 0)
+    }
+
     func testUnavailableServiceUsesExitThree() async {
         let transport = MockTransport(error: CLIError.unavailable("Command-line search access is disabled."))
         let result = await CLIRunner(transport: transport).run(arguments: ["search", "--", "a"])
@@ -65,6 +77,7 @@ final class CLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 4)
         XCTAssertEqual(transport.cancellations, 1)
+        XCTAssertEqual(transport.finished.wait(timeout: .now() + 1), .success)
     }
 
     func testCancellationCancelsOnlyThisRequestAndUsesSIGINTStatus() async {
@@ -75,6 +88,7 @@ final class CLITests: XCTestCase {
 
         XCTAssertEqual(result.exitCode, 130)
         XCTAssertEqual(transport.cancellations, 1)
+        XCTAssertEqual(transport.finished.wait(timeout: .now() + 1), .success)
     }
 }
 
@@ -98,12 +112,20 @@ private final class MockTransport: CLISearchTransport, @unchecked Sendable {
 }
 
 private final class SlowTransport: CLISearchTransport, @unchecked Sendable {
-    private(set) var cancellations = 0
+    private let lock = NSLock()
+    private var cancellationCount = 0
+    let finished = DispatchSemaphore(value: 0)
+    var cancellations: Int { lock.lock(); defer { lock.unlock() }; return cancellationCount }
 
     func search(_ request: SearchRequest, requestID: UUID, deadline: Date) async throws -> SearchResponse {
-        await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
+        defer { finished.signal() }
+        try await Task.sleep(for: .seconds(3_600))
         return SearchResponse(records: [])
     }
 
-    func cancel(_ requestID: UUID) async { cancellations += 1 }
+    func cancel(_ requestID: UUID) async { recordCancellation() }
+
+    private func recordCancellation() {
+        lock.lock(); cancellationCount += 1; lock.unlock()
+    }
 }

@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Bundle the `everythingmac` search CLI with bounded results, deadlines,
+  structured JSON or path output, cancellation, and explicit exit statuses.
 - Add a default-off setting for signed command-line searches. The search
   service checks access per request and cancels outstanding command-line work
   when access is disabled; CLI clients cannot change index rules or rebuild.

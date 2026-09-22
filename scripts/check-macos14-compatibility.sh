@@ -14,6 +14,8 @@ fi
 derived_data="$1"
 app_path="$derived_data/Build/Products/Release/EverythingMac.app"
 info_plist="$app_path/Contents/Info.plist"
+gui_name="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleExecutable' "$info_plist")"
+gui_executable="$app_path/Contents/MacOS/$gui_name"
 metadata_directory="$app_path/Contents/Resources/Metadata.appintents"
 metadata_path=""
 app_pid=""
@@ -41,7 +43,8 @@ exit(hasWindow ? EXIT_SUCCESS : EXIT_FAILURE)
 SWIFT
 }
 
-test -x "$app_path/Contents/MacOS/EverythingMac"
+"$(dirname "$0")/check-cli-bundle.sh" "$app_path"
+test -x "$gui_executable"
 if [[ ! -d "$metadata_directory" ]]; then
   echo "Missing App Intents metadata directory: $metadata_directory" >&2
   exit 1
@@ -74,7 +77,7 @@ fi
 open -n "$app_path"
 
 for _ in {1..15}; do
-  app_pid="$(pgrep -f "$app_path/Contents/MacOS/EverythingMac" | head -n 1 || true)"
+  app_pid="$(pgrep -f "$gui_executable" | head -n 1 || true)"
   [[ -n "$app_pid" ]] && break
   sleep 1
 done
