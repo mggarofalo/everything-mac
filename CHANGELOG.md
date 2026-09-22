@@ -23,7 +23,11 @@
   cancellation, and an index with no published snapshot, and report the
   effective limit, exact truncation, and scan state for successful searches.
 - Refresh background-service registrations after replacing the app bundle, and
-  time out unresponsive startup requests so recovery and Retry remain available.
+  check indexer responsiveness before timing out startup requests. Long searches
+  can finish without a service restart; unresponsive services still recover.
+- Preview search results with Quick Look using Space, ⌘Y, or the shortcut menu.
+- Use Developer ID signing by default for local installs and preview DMGs;
+  require an explicit override for development signing.
 
 ## 0.9.7
 

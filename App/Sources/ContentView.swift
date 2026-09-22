@@ -1,4 +1,5 @@
 import SwiftUI
+import QuickLook
 import IndexCore
 
 struct ContentView: View {
@@ -78,6 +79,7 @@ struct ContentView: View {
                 ResultsTable(rows: model.results,
                              onSort: { k, a in model.setSort(k, ascending: a) },
                              onSelect: { model.select($0) },
+                             onPreview: { model.togglePreview($0) },
                              onActivate: { ResultActions.open($0) })
                 if showsStartupProgress {
                     HStack(spacing: 10) {
@@ -100,6 +102,11 @@ struct ContentView: View {
         }
         .background(.regularMaterial)
         .background(SearchWindowRegistration { searchWindowNumber = $0?.windowNumber })
+        .quickLookPreview($model.previewURL)
+        .onChange(of: model.results) {
+            guard let url = model.previewURL else { return }
+            if !model.results.contains(where: { $0.path == url.path }) { model.previewURL = nil }
+        }
         .onAppear {
             refreshAccess()
             searchFocused = true

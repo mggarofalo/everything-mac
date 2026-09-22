@@ -19,7 +19,7 @@ application entry and do not appear as separate items. When you return to
 EverythingMac, it refreshes both background services so the new permission
 takes effect.
 
-EverythingMac refreshes both background-service registrations after an app replacement, preserving the saved index. Startup status requests time out if a service cannot respond, allowing automatic recovery or Retry.
+EverythingMac refreshes both background-service registrations after an app replacement, preserving the saved index. Startup status requests check whether the indexer is responsive before triggering recovery, so a long search can finish without a service restart. An unresponsive service times out, allowing automatic recovery or Retry.
 
 EverythingMac shows a loading panel while the services start. The status bar reports progress once the first scan begins. Later launches load the saved index and replay filesystem changes.
 
@@ -33,6 +33,8 @@ and restarted automatically when the app retries the connection.
 Enter any part of a file or folder name. Use the sliders button beside the search field to enable `Match Path`, `Match Case`, or `Match Whole Word`.
 
 You can sort the result table by name, path, size, kind, or modification date. Double-click a result to open it. The shortcut menu can open it with another app, reveal it in Finder, copy its name or path, or move it to the Trash. Use `File > Export Results` to save the current rows as a tab-separated file.
+
+Select a result and press Space to toggle a native Quick Look preview, or use `File > Quick Look` (⌘Y) or the shortcut menu. While the preview is open, selecting another result updates it. Preview availability depends on the file type and macOS access permissions.
 
 ### Filter results
 
@@ -214,7 +216,7 @@ after checking that it still points to this app. The app does not delete user-cr
 ## Build from source
 
 Development requires macOS 14 or newer, Xcode 16 or newer, XcodeGen, SwiftLint,
-and an Apple Development signing identity.
+and a Developer ID Application signing identity by default.
 
 ```bash
 brew install xcodegen swiftlint
@@ -225,7 +227,9 @@ cd everything-mac
 
 The build script generates the Xcode project, makes a signed Release build, verifies it, and installs it in Applications. It also restarts registered services after an upgrade.
 
-Set `LOCAL_SIGN_IDENTITY` to choose a certificate instead of using the first Apple Development identity:
+By default, local installs and preview DMGs use the single valid Developer ID Application identity in Keychain, matching public releases. Set `DEVELOPER_ID` to select an exact certificate when more than one exists; `DEVELOPER_TEAM_ID` can filter automatic selection by team. Local builds do not require notarization credentials and do not publish anything.
+
+There is no automatic fallback to development signing. Set `LOCAL_SIGN_IDENTITY` explicitly if you need it (switching certificate types may require granting Full Disk Access again):
 
 ```bash
 LOCAL_SIGN_IDENTITY="Apple Development: Your Name (TEAMID)" \
@@ -252,7 +256,7 @@ requires at least 85% line coverage in every core source file.
 
 ## Package a release
 
-A preview DMG exercises the complete packaging flow with an Apple Development certificate. It is not notarized and is only suitable for local testing.
+A preview DMG exercises the complete packaging flow with the same Developer ID certificate by default. It is not notarized and is only suitable for local testing.
 
 ```bash
 ./scripts/build-dmg.sh --preview
