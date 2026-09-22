@@ -96,6 +96,8 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
             let envelope: ServiceReply
             do {
                 envelope = try await handle(request, searchGeneration: searchGeneration)
+            } catch let error as ServiceErrorCode {
+                envelope = .failure(error.message, code: error)
             } catch {
                 envelope = .failure(error.localizedDescription)
             }
@@ -109,19 +111,23 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
             let status = await index.serviceStatus(hasFullDiskAccess: FullDiskAccess.isGranted())
             return .success(status)
         case .search:
+            guard FullDiskAccess.isGranted() else {
+                return .failure(ServiceErrorCode.permissionDenied.message, code: .permissionDenied)
+            }
             let payload = try requirePayload(request)
             let query = try JSONDecoder().decode(SearchRequest.self, from: payload)
             guard let searchGeneration else { return .failure("Missing search generation") }
-            let records = await index.search(query.text, matchPath: query.matchPath,
-                                             caseInsensitive: query.caseInsensitive,
-                                             wholeWord: query.wholeWord,
-                                             usesRegularExpression: query.usesRegularExpression,
-                                             sort: query.sort, ascending: query.ascending,
-                                             limit: min(max(1, query.limit), 10_000),
-                                             isCancelled: { [latestSearch] in
-                                                 !latestSearch.isCurrent(searchGeneration)
-                                             })
-            return .success(SearchResponse(records: records))
+            guard (1...10_000).contains(query.limit) else {
+                return .failure("Limit must be between 1 and 10000.", code: .invalidQuery)
+            }
+            let response = try await index.searchResponse(
+                query.text, matchPath: query.matchPath,
+                caseInsensitive: query.caseInsensitive, wholeWord: query.wholeWord,
+                usesRegularExpression: query.usesRegularExpression,
+                sort: query.sort, ascending: query.ascending, limit: query.limit,
+                isCancelled: { [latestSearch] in !latestSearch.isCurrent(searchGeneration) }
+            )
+            return .success(response)
         case .cancelSearch:
             // Handled synchronously by perform(), before creating this task.
             return .success(true)

@@ -30,13 +30,32 @@ struct ServiceRequest: Codable, Sendable {
 struct ServiceReply: Codable, Sendable {
     let payload: Data?
     let error: String?
+    let errorCode: ServiceErrorCode?
 
     static func success<T: Encodable>(_ value: T) -> ServiceReply {
-        ServiceReply(payload: try? JSONEncoder().encode(value), error: nil)
+        ServiceReply(payload: try? JSONEncoder().encode(value), error: nil, errorCode: nil)
     }
 
-    static func failure(_ message: String) -> ServiceReply {
-        ServiceReply(payload: nil, error: message)
+    static func failure(_ message: String, code: ServiceErrorCode = .internalError) -> ServiceReply {
+        ServiceReply(payload: nil, error: message, errorCode: code)
+    }
+}
+
+enum ServiceErrorCode: String, Codable, Sendable, Error {
+    case invalidQuery
+    case permissionDenied
+    case indexNotReady
+    case cancelled
+    case internalError
+
+    var message: String {
+        switch self {
+        case .invalidQuery: "Invalid query."
+        case .permissionDenied: "Full Disk Access is required."
+        case .indexNotReady: "The index is not ready."
+        case .cancelled: "Search was cancelled."
+        case .internalError: "Internal service error."
+        }
     }
 }
 
@@ -45,6 +64,16 @@ struct ServiceStatus: Codable, Sendable {
     let revision: UInt64
     let scanning: Bool
     let hasFullDiskAccess: Bool
+    let ready: Bool
+
+    init(totalCount: Int, revision: UInt64, scanning: Bool,
+         hasFullDiskAccess: Bool, ready: Bool = false) {
+        self.totalCount = totalCount
+        self.revision = revision
+        self.scanning = scanning
+        self.hasFullDiskAccess = hasFullDiskAccess
+        self.ready = ready
+    }
 }
 
 struct SearchRequest: Codable, Sendable {
@@ -60,6 +89,17 @@ struct SearchRequest: Codable, Sendable {
 
 struct SearchResponse: Codable, Sendable {
     let records: [FileRecord]
+    let limit: Int
+    let truncated: Bool
+    let scanning: Bool
+
+    init(records: [FileRecord], limit: Int = 0, truncated: Bool = false,
+         scanning: Bool = false) {
+        self.records = records
+        self.limit = limit
+        self.truncated = truncated
+        self.scanning = scanning
+    }
 }
 
 enum ServicePaths {
