@@ -36,6 +36,6 @@ struct SearchSettingsView: View {
         Binding(get: { model.ascending }, set: { model.setSort(model.sortKey, ascending: $0) })
     }
     private var limitBinding: Binding<Int> {
-        Binding(get: { model.resultLimit }, set: { model.resultLimit = $0; model.searchOptionsChanged() })
+        Binding(get: { model.resultLimit }, set: { model.setResultLimit($0) })
     }
 }
