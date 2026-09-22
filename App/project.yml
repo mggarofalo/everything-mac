@@ -7,6 +7,19 @@ packages:
   IndexCore:
     path: ..
 targets:
+  EverythingMacPresentationTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Sources/SearchPresentationCoordinator.swift
+      - Tests/PresentationTests
+    dependencies:
+      - package: IndexCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.presentation-tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "6.0"
   EverythingMacServiceTests:
     type: bundle.unit-test
     platform: macOS

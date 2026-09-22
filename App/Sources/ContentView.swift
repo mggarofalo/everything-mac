@@ -57,6 +57,7 @@ struct ContentView: View {
                         caseSensitive: $model.caseSensitive,
                         wholeWord: $model.wholeWord,
                         focused: $searchFocused,
+                        focusSignal: model.focusSearchSignal,
                         onTextChange: { model.queryChanged() },
                         onOptionsChange: { model.searchOptionsChanged() })
             Divider()
@@ -85,6 +86,7 @@ struct ContentView: View {
             StatusBar(total: model.total, shown: model.results.count, scanning: model.scanning)
         }
         .background(.regularMaterial)
+        .background(SearchWindowRegistration())
         .onAppear {
             refreshAccess()
             searchFocused = true

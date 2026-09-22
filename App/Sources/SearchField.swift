@@ -30,6 +30,7 @@ struct SearchField: View {
     @Binding var caseSensitive: Bool
     @Binding var wholeWord: Bool
     var focused: FocusState<Bool>.Binding
+    var focusSignal: Int
     var onTextChange: () -> Void
     var onOptionsChange: () -> Void
     @State private var showsSuggestions = false
@@ -38,7 +39,7 @@ struct SearchField: View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
                 Image(systemName: "magnifyingglass").foregroundStyle(.secondary)
-                QueryTextField(text: $text, focused: focused,
+                QueryTextField(text: $text, focused: focused, focusSignal: focusSignal,
                                onTextChange: textChanged,
                                onTab: complete)
                     .frame(height: 26)

@@ -179,7 +179,7 @@ final class AppModel: ObservableObject {
 
     func queryChanged() {
         savePrefs()   // also captures a Match-path toggle (shares this entry point)
-        task?.cancel()
+        invalidateSearch()
         task = Task {
             // Cancelling this Swift task cannot retract an XPC request that was
             // already delivered. Invalidate it before issuing its replacement.
@@ -195,7 +195,7 @@ final class AppModel: ObservableObject {
     // re-run immediately (no debounce — these come from a deliberate click, not typing).
     func searchOptionsChanged() {
         savePrefs()
-        task?.cancel()
+        invalidateSearch()
         task = Task {
             await index.cancelPendingSearch()
             if Task.isCancelled { return }
@@ -237,6 +237,32 @@ final class AppModel: ObservableObject {
     }
 
     func focusSearch() { focusSearchSignal &+= 1 }
+
+    func runPresentedQuery(_ text: String) {
+        let defaults = PresentedSearchDefaults()
+        query = text
+        sortKey = defaults.sortKey
+        ascending = defaults.ascending
+        matchPath = defaults.matchPath
+        caseSensitive = defaults.caseSensitive
+        wholeWord = defaults.wholeWord
+        usesRegularExpression = defaults.usesRegularExpression
+        resultLimit = defaults.resultLimit
+        select(nil)
+        invalidateSearch()
+        task = Task {
+            await index.cancelPendingSearch()
+            guard !Task.isCancelled else { return }
+            await runSearch()
+        }
+    }
+
+    private func invalidateSearch() {
+        task?.cancel()
+        // Invalidate a request as soon as the user changes the query or an external
+        // request arrives, before cancellation reaches the indexing service.
+        searchSeq &+= 1
+    }
 
     // MARK: - Search preference persistence (UserDefaults)
 
@@ -313,9 +339,8 @@ final class AppModel: ObservableObject {
     }
 
     private func beginRebuild() {
-        task?.cancel()
+        invalidateSearch()
         liveTask?.cancel()
-        searchSeq &+= 1
         scanning = true
         results = []
         total = 0
