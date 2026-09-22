@@ -38,7 +38,7 @@ struct EverythingMacApp: App {
                 .environmentObject(model)
                 .environmentObject(presentation)
                 .environmentObject(presentationHost)
-                .background(SearchPresentationSceneHost())
+                .background(SearchPresentationSceneHost(presentation: presentation))
                 .frame(minWidth: 800, minHeight: 500)
                 .onAppear {
                     shortcut.start()
@@ -48,24 +48,31 @@ struct EverythingMacApp: App {
         }
         .commands { AppCommands(model: model) }
         Settings {
-            SettingsView(showInMenuBar: $menuBar.isVisible)
+            SettingsView(showInMenuBar: menuBarVisibility)
                 .environmentObject(model)
                 .environmentObject(presentation)
                 .environmentObject(presentationHost)
                 .environmentObject(shortcut)
-                .background(SearchPresentationSceneHost())
+                .background(SearchPresentationSceneHost(presentation: presentation))
         }
-        MenuBarExtra("EverythingMac", systemImage: "magnifyingglass", isInserted: $menuBar.isVisible) {
+        MenuBarExtra("EverythingMac", systemImage: "magnifyingglass", isInserted: menuBarVisibility) {
             EverythingMacMenuBarExtra()
                 .environmentObject(presentation)
         }
         .menuBarExtraStyle(.menu)
     }
+
+    private var menuBarVisibility: Binding<Bool> {
+        Binding(
+            get: { menuBar.isVisible },
+            set: { menuBar.setVisible($0) }
+        )
+    }
 }
 
 private struct SearchPresentationSceneHost: View {
     @Environment(\.openWindow) private var openWindow
-    @EnvironmentObject private var presentation: SearchPresentationCoordinator
+    @ObservedObject var presentation: SearchPresentationCoordinator
 
     var body: some View {
         Color.clear

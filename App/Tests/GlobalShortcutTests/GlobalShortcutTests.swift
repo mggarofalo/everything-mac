@@ -1,5 +1,6 @@
 import AppKit
 @preconcurrency import Carbon
+import Combine
 import XCTest
 
 @MainActor
@@ -156,6 +157,22 @@ final class GlobalShortcutTests: XCTestCase {
         XCTAssertFalse(preference.isVisible)
         preference.isVisible = true
         XCTAssertTrue(MenuBarPreference(defaults: defaults).isVisible)
+    }
+
+    func testMenuBarPreferenceDoesNotPublishForAnUnchangedValue() {
+        let suite = "MenuBarPreferenceTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preference = MenuBarPreference(defaults: defaults)
+        var updates = 0
+        let subscription = preference.objectWillChange.sink { _ in updates += 1 }
+        defer { subscription.cancel() }
+
+        preference.setVisible(false)
+        XCTAssertEqual(updates, 0)
+
+        preference.setVisible(true)
+        XCTAssertEqual(updates, 1)
     }
 
     private func shortcut(keyCode: Int) -> GlobalShortcut {
