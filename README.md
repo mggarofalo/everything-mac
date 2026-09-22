@@ -89,10 +89,11 @@ and runs that query in the normal search interface.
 Automation can open a search with the canonical URL form:
 
 ```
-everythingmac://search?q=kind%3Apdf%20annual%20report
+everythingmac://search?q=filetype%3Apdf%20annual%20report
 ```
 
-The URL has exactly one percent-encoded `q` parameter. Build URLs with an encoder such as
+URL requests reuse an open search window, or open one when needed. The URL has exactly one
+percent-encoded `q` parameter. Build URLs with an encoder such as
 `URLComponents`; do not substitute query text into the URL string. Shell history can retain URLs,
 so avoid placing sensitive query text directly in a shell command.
 
