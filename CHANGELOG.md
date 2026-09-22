@@ -7,6 +7,7 @@
 - Add a default-off setting for signed command-line searches. The search
   service checks access per request and cancels outstanding command-line work
   when access is disabled; CLI clients cannot change index rules or rebuild.
+- Verify all bundled executable identities and signing teams during installation and DMG packaging.
 - Isolate search cancellation per trusted client connection, bound queued search
   work, and report cancellation or overload explicitly instead of returning an
   empty successful result.

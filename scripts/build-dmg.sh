@@ -33,6 +33,7 @@ dist_dir="$repo_dir/dist"
 app="$build_dir/Build/Products/Release/EverythingMac.app"
 indexing_service="$app/Contents/MacOS/EverythingMacIndexingService"
 search_service="$app/Contents/MacOS/EverythingMacSearchService"
+cli="$app/Contents/MacOS/everythingmac"
 
 if [[ "$mode" == "preview" ]]; then
   sign_identity="${LOCAL_SIGN_IDENTITY:-$(security find-identity -v -p codesigning \
@@ -101,8 +102,8 @@ xcodebuild -project EverythingMac.xcodeproj -scheme EverythingMac \
   CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
   ENABLE_HARDENED_RUNTIME=YES
 
-[[ -x "$indexing_service" && -x "$search_service" ]] || {
-  echo "The built app is missing one or more background services." >&2
+[[ -x "$indexing_service" && -x "$search_service" && -x "$cli" ]] || {
+  echo "The built app is missing a background service or the command-line tool." >&2
   exit 1
 }
 
@@ -112,21 +113,19 @@ codesign --force --options runtime "${timestamp_option[@]}" \
 codesign --force --options runtime "${timestamp_option[@]}" \
   --identifier EverythingMacSearchService --sign "$sign_identity" "$search_service"
 codesign --force --options runtime "${timestamp_option[@]}" \
+  --identifier com.everythingmac.cli --sign "$sign_identity" "$cli"
+codesign --force --options runtime "${timestamp_option[@]}" \
   --entitlements "$app_dir/EverythingMac.entitlements" \
   --identifier com.everythingmac.app --sign "$sign_identity" "$app"
 
-codesign --verify --strict --verbose=2 "$indexing_service"
-codesign --verify --strict --verbose=2 "$search_service"
-codesign --verify --strict --verbose=2 "$app"
-
-for signed_item in "$indexing_service" "$search_service" "$app"; do
-  signed_team="$(codesign -dvv "$signed_item" 2>&1 \
-    | sed -n 's/^TeamIdentifier=//p')"
-  [[ "$signed_team" == "${developer_team_id:-$signed_team}" ]] || {
-    echo "Unexpected signing team for $signed_item: $signed_team" >&2
+bash "$repo_dir/scripts/verify-app-signatures.sh" "$app"
+if [[ "$mode" == "release" ]]; then
+  signed_team="$(codesign -dvv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+  [[ "$signed_team" == "$developer_team_id" ]] || {
+    echo "Unexpected release signing team: $signed_team" >&2
     exit 1
   }
-done
+fi
 
 version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$app/Contents/Info.plist")"
 artifact_name="EverythingMac-${version}${artifact_suffix}.dmg"
