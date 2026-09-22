@@ -97,10 +97,11 @@ percent-encoded `q` parameter. Build URLs with an encoder such as
 `URLComponents`; do not substitute query text into the URL string. Shell history can retain URLs,
 so avoid placing sensitive query text directly in a shell command.
 
-## Planned command-line contract
+## Command-line search
 
-The `everythingmac` command is planned; it is not included in this release. Its
-signed client will require **Settings → General → Allow command-line searches**,
+EverythingMac includes `everythingmac` at
+`/Applications/EverythingMac.app/Contents/MacOS/everythingmac`. The signed
+client requires **Settings → General → Allow command-line searches**,
 which is off by default. Disabling it cancels active command-line searches but
 cannot recall output already received. Any local process invoking the signed
 tool as your user can receive results while access is enabled.
@@ -111,8 +112,8 @@ unchanged to the app's parser. Blank queries, NUL bytes, and queries exceeding
 16 KiB of UTF-8 are invalid. Quoting is the shell's responsibility.
 
 Search options are `--format paths|json` (default `paths`), `--null` (paths
-only), `--limit 1..10000` (default 1000), `--timeout` in positive seconds
-(default 30), `--match-path`, `--case-sensitive`, and `--whole-word`. All
+only), `--limit 1..10000` (default 1000), `--timeout` in finite positive seconds
+up to 3600 (default 30), `--match-path`, `--case-sensitive`, and `--whole-word`. All
 matching modifiers default to false, independently of UI preferences. Use the
 existing `rx:` or `regex:` query syntax for regular expressions. Results sort
 by name ascending, then by full path for equal names. A query's own limit can
@@ -141,8 +142,9 @@ error, including when its current record count is zero.
 Exit status is 0 for a successful query, including zero or capped results; 2
 for invalid arguments or query; 3 for unavailable or overloaded service,
 unready index, or permission/automation denial; 4 for timeout; 5 for internal or protocol error;
-and 130 for SIGINT. Failure produces no partial success document. A closed
-output pipe exits cleanly with status 0.
+and 130 for SIGINT or SIGTERM. Failure produces no partial success document.
+A closed output pipe during a successful result stream exits cleanly with status
+0; errors retain their exit status even if stderr is closed.
 
 Searches are admitted to the one shared index actor, with at most 32 client
 connections per service, 32 requests in flight across clients, at most two

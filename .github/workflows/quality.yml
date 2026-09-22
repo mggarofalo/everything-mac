@@ -22,5 +22,7 @@ jobs:
           xcodebuild -project App/EverythingMac.xcodeproj \
             -scheme EverythingMac \
             -configuration Release \
+            -derivedDataPath App/build \
             CODE_SIGNING_ALLOWED=NO \
             build
+          ./scripts/check-cli-bundle.sh App/build/Build/Products/Release/EverythingMac.app
