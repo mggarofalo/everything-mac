@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 #
-# Build a local Release build of EverythingMac, signed with a stable Apple
-# Development identity so Full Disk Access persists across rebuilds.
+# Build a local Release build of EverythingMac using Developer ID signing,
+# matching public releases to keep the signing identity stable.
 #
 # Why Release (not Debug): the search match-loop is ~100x slower unoptimized
 # (~1.5s vs ~14ms per million records). A Debug build feels broken on a
 # whole-disk index. Always test with this script, not Xcode's default Debug run.
 #
-# Set LOCAL_SIGN_IDENTITY to choose a certificate. Otherwise the script uses the
-# first Apple Development identity in the login keychain. The Release build uses
+# Set DEVELOPER_ID to choose among Developer ID certificates, or explicitly
+# override with LOCAL_SIGN_IDENTITY to use development signing. The Release build uses
 # hardened runtime and suppresses Xcode's debug-only get-task-allow entitlement.
 #
 # Usage: ./scripts/build-dev.sh   →   prints the built .app path.
@@ -16,13 +16,9 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../App"
 
-SIGN_IDENTITY="${LOCAL_SIGN_IDENTITY:-$(security find-identity -v -p codesigning \
-  | sed -n 's/.*"\(Apple Development:[^"]*\)"/\1/p' | head -n 1)}"
-if [[ -z "$SIGN_IDENTITY" ]]; then
-  echo "No Apple Development signing identity found." >&2
-  echo "Set LOCAL_SIGN_IDENTITY or create a certificate in Xcode Settings > Accounts." >&2
-  exit 1
-fi
+source "../scripts/local-signing.sh"
+SIGN_IDENTITY="$(local_signing_identity)"
+echo "Signing local build with: $SIGN_IDENTITY"
 
 xcodegen generate
 xcodebuild -project EverythingMac.xcodeproj -scheme EverythingMac \
