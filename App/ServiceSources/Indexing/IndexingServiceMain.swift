@@ -1,39 +1,20 @@
 import AppKit
 import IndexCore
 
-private final class LatestSearch: @unchecked Sendable {
-    private let lock = NSLock()
-    private var generation: UInt64 = 0
-
-    func begin() -> UInt64 {
-        lock.lock()
-        defer { lock.unlock() }
-        generation &+= 1
-        return generation
-    }
-
-    func isCurrent(_ candidate: UInt64) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        return generation == candidate
-    }
-}
-
-private final class IndexService: NSObject, EverythingMacServiceProtocol, @unchecked Sendable {
+private final class IndexService: @unchecked Sendable {
     private let index = IndexActor()
-    private let latestSearch = LatestSearch()
+    let admission = SearchAdmission()
     private var generation: UInt64 = 1
     private let startLock = NSLock()
     private var didStart = false
     private var cacheTimer: DispatchSourceTimer?
     private var userFolderTimer: DispatchSourceTimer?
 
-    override init() {
-        super.init()
+    init() {
         ensureStarted()
     }
 
-    private func ensureStarted() {
+    fileprivate func ensureStarted() {
         guard FullDiskAccess.isGranted() else { return }
         startLock.lock()
         guard !didStart else { startLock.unlock(); return }
@@ -72,40 +53,7 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
         userFolderTimer = folders
     }
 
-    func perform(_ requestData: Data, withReply reply: @escaping @Sendable (Data) -> Void) {
-        ensureStarted()
-        let request: ServiceRequest
-        do {
-            request = try JSONDecoder().decode(ServiceRequest.self, from: requestData)
-        } catch {
-            let failure = ServiceReply.failure(error.localizedDescription)
-            reply((try? JSONEncoder().encode(failure)) ?? Data())
-            return
-        }
-        // Cancellation must not wait for the index actor: that actor may be
-        // occupied by the CPU-bound regex scan that needs interrupting.
-        if request.operation == .cancelSearch {
-            _ = latestSearch.begin()
-            reply((try? JSONEncoder().encode(ServiceReply.success(true))) ?? Data())
-            return
-        }
-        // Advance this before awaiting the actor. A newer XPC request can then
-        // cancel a CPU-bound older search even while the actor is occupied by it.
-        let searchGeneration = request.operation == .search ? latestSearch.begin() : nil
-        Task {
-            let envelope: ServiceReply
-            do {
-                envelope = try await handle(request, searchGeneration: searchGeneration)
-            } catch let error as ServiceErrorCode {
-                envelope = .failure(error.message, code: error)
-            } catch {
-                envelope = .failure(error.localizedDescription)
-            }
-            reply((try? JSONEncoder().encode(envelope)) ?? Data())
-        }
-    }
-
-    private func handle(_ request: ServiceRequest, searchGeneration: UInt64?) async throws -> ServiceReply {
+    func handle(_ request: ServiceRequest, token: SearchCancellationToken?) async throws -> ServiceReply {
         switch request.operation {
         case .status:
             let status = await index.serviceStatus(hasFullDiskAccess: FullDiskAccess.isGranted())
@@ -116,7 +64,8 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
             }
             let payload = try requirePayload(request)
             let query = try JSONDecoder().decode(SearchRequest.self, from: payload)
-            guard let searchGeneration else { return .failure("Missing search generation") }
+            guard let token else { return .failure("Missing search token") }
+            guard !token.isCancelled else { throw ServiceErrorCode.cancelled }
             guard (1...10_000).contains(query.limit) else {
                 return .failure("Limit must be between 1 and 10000.", code: .invalidQuery)
             }
@@ -125,7 +74,8 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
                 caseInsensitive: query.caseInsensitive, wholeWord: query.wholeWord,
                 usesRegularExpression: query.usesRegularExpression,
                 sort: query.sort, ascending: query.ascending, limit: query.limit,
-                isCancelled: { [latestSearch] in !latestSearch.isCurrent(searchGeneration) }
+                interactive: query.supersedeExisting == true,
+                isCancelled: { token.isCancelled }
             )
             return .success(response)
         case .cancelSearch:
@@ -157,16 +107,143 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
 
 }
 
+private final class IndexSession: NSObject, EverythingMacServiceProtocol, @unchecked Sendable {
+    private struct PendingSearch: Sendable {
+        let request: ServiceRequest
+        let reply: @Sendable (Data) -> Void
+    }
+
+    private let service: IndexService
+    private let state = SearchSessionState<PendingSearch>()
+    private let lease: ConnectionLease
+    private var observerID: UUID?
+
+    init(service: IndexService, lease: ConnectionLease) {
+        self.service = service
+        self.lease = lease
+        super.init()
+        observerID = service.admission.observe { [weak self] in self?.drainPending() }
+    }
+
+    func close() {
+        let abandoned = state.close()
+        service.admission.removeObserver(observerID)
+        lease.close()
+        if let abandoned { send(.failure(ServiceErrorCode.cancelled.message, code: .cancelled),
+                                to: abandoned.reply) }
+    }
+
+    func perform(_ data: Data, withReply reply: @escaping @Sendable (Data) -> Void) {
+        guard !state.isClosed else {
+            send(.failure("Index session closed", code: .serviceUnavailable), to: reply)
+            return
+        }
+        service.ensureStarted()
+        guard let request = try? JSONDecoder().decode(ServiceRequest.self, from: data) else {
+            send(.failure("Invalid service request"), to: reply)
+            return
+        }
+        if request.operation == .cancelSearch {
+            if let cancelled = state.cancel(request.requestID) {
+                send(.failure(ServiceErrorCode.cancelled.message, code: .cancelled),
+                     to: cancelled.reply)
+            }
+            send(.success(true), to: reply)
+            return
+        }
+        let id = request.requestID ?? UUID()
+        let interactive = (try? request.payload.flatMap {
+            try JSONDecoder().decode(SearchRequest.self, from: $0)
+        })?.supersedeExisting == true
+        if request.operation == .search {
+            if interactive {
+                queueInteractive(request, id: id, reply: reply)
+                return
+            }
+            guard service.admission.acquire(interactive: interactive) else {
+                send(.failure(ServiceErrorCode.overloaded.message, code: .overloaded), to: reply)
+                return
+            }
+            guard let token = state.beginIndependent(id) else {
+                service.admission.release(interactive: interactive)
+                send(.failure(ServiceErrorCode.overloaded.message, code: .overloaded), to: reply)
+                return
+            }
+            run(request, id: id, token: token, interactive: false, reply: reply)
+            return
+        }
+        run(request, id: id, token: nil, interactive: false, reply: reply)
+    }
+
+    private func queueInteractive(_ request: ServiceRequest, id: UUID,
+                                  reply: @escaping @Sendable (Data) -> Void) {
+        switch state.offer(PendingSearch(request: request, reply: reply), id: id) {
+        case .closed:
+            send(.failure("Index session closed", code: .serviceUnavailable), to: reply)
+        case .duplicate:
+            send(.failure("Duplicate search request ID", code: .invalidQuery), to: reply)
+        case .accepted(let replaced):
+            if let replaced {
+                send(.failure(ServiceErrorCode.cancelled.message, code: .cancelled),
+                     to: replaced.reply)
+            }
+            drainPending()
+        }
+    }
+
+    private func drainPending() {
+        guard let next = state.takeReady(
+            acquire: { service.admission.acquire(interactive: true) },
+            releaseWithoutNotification: {
+                service.admission.release(interactive: true, notify: false)
+            }
+        ) else { return }
+        run(next.work.request, id: next.id, token: next.token,
+            interactive: true, reply: next.work.reply)
+    }
+
+    private func run(_ request: ServiceRequest, id: UUID, token: SearchCancellationToken?,
+                     interactive: Bool, reply: @escaping @Sendable (Data) -> Void) {
+        Task {
+            var envelope: ServiceReply
+            do {
+                envelope = try await service.handle(request, token: token)
+            } catch let error as ServiceErrorCode {
+                envelope = .failure(error.message, code: error)
+            } catch {
+                envelope = .failure(error.localizedDescription)
+            }
+            if token?.isCancelled == true {
+                envelope = .failure(ServiceErrorCode.cancelled.message, code: .cancelled)
+            }
+            if request.operation == .search {
+                state.finish(id)
+                service.admission.release(interactive: interactive)
+            }
+            send(envelope, to: reply)
+        }
+    }
+
+    private func send(_ value: ServiceReply, to reply: @escaping @Sendable (Data) -> Void) {
+        reply((try? JSONEncoder().encode(value)) ?? Data())
+    }
+}
+
 private final class ListenerDelegate: NSObject, NSXPCListenerDelegate {
     let service = IndexService()
+    private let admission = ConnectionAdmission(capacity: 32)
 
     func listener(_ listener: NSXPCListener,
                   shouldAcceptNewConnection connection: NSXPCConnection) -> Bool {
-        guard ConnectionTrust.accepts(connection, identifiers: [searchServiceSigningIdentifier]) else {
+        guard ConnectionTrust.accepts(connection, identifiers: [searchServiceSigningIdentifier]),
+              let lease = admission.acquire() else {
             return false
         }
         connection.exportedInterface = NSXPCInterface(with: EverythingMacServiceProtocol.self)
-        connection.exportedObject = service
+        let session = IndexSession(service: service, lease: lease)
+        connection.exportedObject = session
+        connection.invalidationHandler = { [weak session] in session?.close() }
+        connection.interruptionHandler = { [weak session] in session?.close() }
         connection.resume()
         return true
     }

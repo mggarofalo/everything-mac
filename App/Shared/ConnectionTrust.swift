@@ -11,9 +11,16 @@ enum ConnectionTrust {
     }
 
     static func accepts(_ connection: NSXPCConnection, identifiers: Set<String>) -> Bool {
+        validatedIdentifier(connection, identifiers: identifiers) != nil
+    }
+
+    static func validatedIdentifier(_ connection: NSXPCConnection,
+                                    identifiers: Set<String>) -> String? {
         guard let own = identityForSelf(),
-              let guest = identity(forPID: connection.processIdentifier) else { return false }
-        return own.teamIdentifier == guest.teamIdentifier && identifiers.contains(guest.identifier)
+              let guest = identity(forPID: connection.processIdentifier),
+              own.teamIdentifier == guest.teamIdentifier,
+              identifiers.contains(guest.identifier) else { return nil }
+        return guest.identifier
     }
 
     private static func identityForSelf() -> Identity? {

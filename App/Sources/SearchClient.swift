@@ -55,7 +55,7 @@ actor SearchClient {
                                     caseInsensitive: caseInsensitive, wholeWord: wholeWord,
                                     usesRegularExpression: usesRegularExpression,
                                     sort: sort, ascending: ascending,
-                                    limit: limit)
+                                    limit: limit, supersedeExisting: true)
         return (try? await call(.search, payload: request, as: SearchResponse.self).records) ?? []
     }
 
@@ -104,18 +104,19 @@ actor SearchClient {
         let replyData: Data
         do {
             replyData = try await withCheckedThrowingContinuation { continuation in
+                let once = DataContinuationOnce(continuation)
                 let proxy = connection.remoteObjectProxyWithErrorHandler { error in
-                    continuation.resume(throwing: error)
+                    once.complete(.failure(error))
                 }
                 guard let service = proxy as? EverythingMacServiceProtocol else {
-                    continuation.resume(throwing: NSError(
+                    once.complete(.failure(NSError(
                         domain: "EverythingMac",
                         code: 2,
                         userInfo: [NSLocalizedDescriptionKey: "Search service unavailable"]
-                    ))
+                    )))
                     return
                 }
-                service.perform(request) { continuation.resume(returning: $0) }
+                service.perform(request) { once.complete(.success($0)) }
             }
         } catch {
             if self.connection === connection {
@@ -125,6 +126,9 @@ actor SearchClient {
         }
         let envelope = try JSONDecoder().decode(ServiceReply.self, from: replyData)
         if let error = envelope.error {
+            if envelope.errorCode == .serviceUnavailable, self.connection === connection {
+                resetConnection()
+            }
             throw NSError(domain: "EverythingMac", code: 3,
                           userInfo: [NSLocalizedDescriptionKey: error])
         }
