@@ -3,6 +3,7 @@ import IndexCore
 
 actor SearchClient {
     private var connection: NSXPCConnection?
+    private var connectionRevision: UInt64 = 0
     private var onLiveChange: (@Sendable () -> Void)?
     private var onProgress: (@Sendable (Int) -> Void)?
     private nonisolated(unsafe) var notificationToken: NSObjectProtocol?
@@ -47,6 +48,7 @@ actor SearchClient {
     }
 
     func resetConnection() {
+        connectionRevision &+= 1
         let oldConnection = connection
         connection = nil
         oldConnection?.invalidate()
@@ -91,6 +93,10 @@ actor SearchClient {
         try await call(.status, payload: Optional<Bool>.none, as: ServiceStatus.self)
     }
 
+    private func ping() async -> Bool {
+        (try? await call(.ping, payload: Optional<Bool>.none, as: Bool.self)) == true
+    }
+
     private func indexChanged() async {
         guard let status = try? await status() else { return }
         if status.scanning { onProgress?(status.totalCount) }
@@ -110,32 +116,47 @@ actor SearchClient {
         // Connect only when the first request is made so a brand-new installation
         // cannot permanently capture an unavailable service before registration.
         let connection = activeConnection()
+        // Keep the XPC object inside the request setup; this value identifies
+        // its lifetime after the continuation suspends the actor.
+        let requestConnectionRevision = connectionRevision
         let replyData: Data
         do {
             replyData = try await withCheckedThrowingContinuation { continuation in
-                let once = DataContinuationOnce(continuation)
+                let waiter = ServiceReplyWaiter { continuation.resume(with: $0) }
+                if operation == .status {
+                    waiter.onDeadline(after: 3) { [self] in
+                        Task {
+                            if !(await ping()) {
+                                waiter.finish(.failure(ServiceReplyTimeout.elapsed))
+                            }
+                        }
+                    }
+                } else if operation == .ping {
+                    waiter.timeOut(after: 2)
+                }
                 let proxy = connection.remoteObjectProxyWithErrorHandler { error in
-                    once.complete(.failure(error))
+                    waiter.finish(.failure(error))
                 }
                 guard let service = proxy as? EverythingMacServiceProtocol else {
-                    once.complete(.failure(NSError(
+                    waiter.finish(.failure(NSError(
                         domain: "EverythingMac",
                         code: 2,
                         userInfo: [NSLocalizedDescriptionKey: "Search service unavailable"]
                     )))
                     return
                 }
-                service.perform(request) { once.complete(.success($0)) }
+                service.perform(request) { waiter.finish(.success($0)) }
             }
         } catch {
-            if self.connection === connection {
+            if operation != .ping && connectionRevision == requestConnectionRevision {
                 resetConnection()
             }
             throw error
         }
         let envelope = try JSONDecoder().decode(ServiceReply.self, from: replyData)
         if let error = envelope.error {
-            if envelope.errorCode == .serviceUnavailable, self.connection === connection {
+            if envelope.errorCode == .serviceUnavailable,
+               operation != .ping, connectionRevision == requestConnectionRevision {
                 resetConnection()
             }
             throw NSError(domain: "EverythingMac", code: 3,
@@ -153,6 +174,7 @@ actor SearchClient {
         let newConnection = NSXPCConnection(machServiceName: searchMachServiceName, options: [])
         newConnection.remoteObjectInterface = NSXPCInterface(with: EverythingMacServiceProtocol.self)
         newConnection.resume()
+        connectionRevision &+= 1
         connection = newConnection
         return newConnection
     }

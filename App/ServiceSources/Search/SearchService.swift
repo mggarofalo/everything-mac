@@ -71,7 +71,38 @@ final class SearchService: NSObject, EverythingMacServiceProtocol, @unchecked Se
             Self.send(.failure("Invalid service request", code: .invalidQuery), once: once, to: reply)
             return
         }
+        if request.operation == .ping {
+            forwardHealthProbe(forwarded, once: once, reply: reply)
+            return
+        }
         forward(forwarded, once: once, reply: reply)
+    }
+
+    // Keep the liveness probe outside the ordinary pending-request limit. A
+    // status reply can wait for IndexActor while the indexer XPC session remains
+    // responsive, even when every normal request slot is occupied.
+    private func forwardHealthProbe(_ data: Data, once: ReplyOnce,
+                                    reply: @escaping @Sendable (Data) -> Void) {
+        if let testForward {
+            testForward(data) { value in once.deliver(value, to: reply) }
+            return
+        }
+        guard let connection = activeConnection() else {
+            Self.send(.failure("Search session closed", code: .serviceUnavailable),
+                      once: once, to: reply)
+            return
+        }
+        let proxy = connection.remoteObjectProxyWithErrorHandler { [weak self] _ in
+            self?.discardConnection(connection)
+            Self.send(.failure("Index service unavailable", code: .serviceUnavailable),
+                      once: once, to: reply)
+        }
+        guard let service = proxy as? EverythingMacServiceProtocol else {
+            Self.send(.failure("Index service unavailable", code: .serviceUnavailable),
+                      once: once, to: reply)
+            return
+        }
+        service.perform(data) { value in once.deliver(value, to: reply) }
     }
 
     private func forward(_ forwarded: Data, once: ReplyOnce,

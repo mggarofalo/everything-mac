@@ -17,6 +17,7 @@ import ServiceManagement
     // Revision 6 removes disabled Background Task Management records for both
     // retired indexer labels, which used the current indexer's Mach service.
     private static let registrationRevision = 6
+    private static let registeredBundleKey = "services.registeredBundleIdentity"
     private static let registrationRevisionKey = "services.registrationRevision"
     private static let services = [
         SMAppService.agent(plistName: "com.everythingmac.indexing-agent.plist"),
@@ -62,14 +63,21 @@ import ServiceManagement
         }
 
         let defaults = UserDefaults.standard
+        // A bundle replacement changes its inode even when the version and plist
+        // are unchanged. launchd can retain a reference to the removed bundle.
+        let bundleIdentity = BundleInstallation.identity(at: Bundle.main.bundleURL)
         let needsRefresh = defaults.integer(forKey: registrationRevisionKey)
-            < registrationRevision
+            < registrationRevision || (bundleIdentity != nil
+                && bundleIdentity != defaults.string(forKey: registeredBundleKey))
+        // A service awaiting user approval is already registered. Defer the
+        // paired refresh until both agents can be registered again.
+        let canRefresh = needsRefresh && !services.contains { $0.status == .requiresApproval }
         var registrationSucceeded = true
 
         // Service Management retains the BundleProgram from the registered plist.
         // Reload both services together so the forwarding service cannot retain a
         // dead connection when an upgrade changes either embedded executable.
-        if needsRefresh {
+        if canRefresh {
             for service in services where service.status == .enabled {
                 do {
                     try service.unregister()
@@ -81,7 +89,7 @@ import ServiceManagement
             }
         }
 
-        for service in services where service.status != .enabled {
+        for service in services where service.status == .notRegistered || service.status == .notFound {
             do {
                 try service.register()
             } catch {
@@ -90,8 +98,11 @@ import ServiceManagement
             }
         }
 
-        if needsRefresh, registrationSucceeded {
+        if canRefresh, registrationSucceeded {
             defaults.set(registrationRevision, forKey: registrationRevisionKey)
+            if let bundleIdentity {
+                defaults.set(bundleIdentity, forKey: registeredBundleKey)
+            }
         }
     }
 

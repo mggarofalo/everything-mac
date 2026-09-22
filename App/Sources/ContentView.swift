@@ -81,7 +81,7 @@ struct ContentView: View {
                              onSelect: { model.select($0) },
                              onPreview: { model.togglePreview($0) },
                              onActivate: { ResultActions.open($0) })
-                if accessState != .denied && model.total == 0 && model.results.isEmpty {
+                if showsStartupProgress {
                     HStack(spacing: 10) {
                         ProgressView()
                             .controlSize(.small)
@@ -121,6 +121,11 @@ struct ContentView: View {
             guard model.focusSearchWindowNumber == searchWindowNumber else { return }
             searchFocused = true
         }
+    }
+
+    private var showsStartupProgress: Bool {
+        (accessState == .checking || (accessState == .granted && model.scanning))
+            && model.total == 0 && model.results.isEmpty
     }
 
     private func refreshAccess(restartServicesIfDenied: Bool = false) {

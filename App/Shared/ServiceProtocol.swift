@@ -16,6 +16,7 @@ let indexProgressNotification = Notification.Name("com.everythingmac.index-progr
 
 enum ServiceOperation: String, Codable, Sendable {
     case status
+    case ping
     case search
     case cancelSearch
     case rebuild

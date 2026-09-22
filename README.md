@@ -19,6 +19,8 @@ application entry and do not appear as separate items. When you return to
 EverythingMac, it refreshes both background services so the new permission
 takes effect.
 
+EverythingMac refreshes both background-service registrations after an app replacement, preserving the saved index. Startup status requests check whether the indexer is responsive before triggering recovery, so a long search can finish without a service restart. An unresponsive service times out, allowing automatic recovery or Retry.
+
 EverythingMac shows a loading panel while the services start. The status bar reports progress once the first scan begins. Later launches load the saved index and replay filesystem changes.
 
 If macOS has disabled the app's background activity, EverythingMac links to
