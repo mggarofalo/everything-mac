@@ -7,6 +7,20 @@ packages:
   IndexCore:
     path: ..
 targets:
+  EverythingMacAdapterTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Sources/SearchAdapters.swift
+      - Sources/SearchPresentationCoordinator.swift
+      - Tests/AdapterTests
+    dependencies:
+      - package: IndexCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.adapter-tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "6.0"
   EverythingMacAppModelTests:
     type: bundle.unit-test
     platform: macOS
@@ -117,6 +131,9 @@ targets:
       properties:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        CFBundleURLTypes:
+          - CFBundleURLName: com.everythingmac.search
+            CFBundleURLSchemes: [everythingmac]
     entitlements:
       path: EverythingMac.entitlements
     dependencies:

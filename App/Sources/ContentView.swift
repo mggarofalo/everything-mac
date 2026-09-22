@@ -11,6 +11,7 @@ struct ContentView: View {
     }
 
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject private var presentationHost: SearchPresentationHost
     @Environment(\.scenePhase) private var scenePhase
     @State private var accessState = AccessState.checking
     @State private var refreshServicesAfterSettings = false
@@ -19,6 +20,17 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
+            if let urlErrorMessage = presentationHost.urlErrorMessage {
+                HStack {
+                    Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+                    Text(urlErrorMessage)
+                    Spacer()
+                    Button("Dismiss") { presentationHost.dismissURLError() }
+                }
+                .padding(8)
+                .background(.yellow.opacity(0.2))
+                Divider()
+            }
             if accessState == .denied {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)

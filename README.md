@@ -83,6 +83,19 @@ You can also choose to show an EverythingMac menu-bar entry. The menu opens sear
 or explicitly quits the UI app. Both optional access points remain available after closing the
 last window. Quitting removes them while the indexing and search background services continue.
 
+Shortcuts also provides a **Search EverythingMac** action with a query field. It opens the app
+and runs that query in the normal search interface.
+
+Automation can open a search with the canonical URL form:
+
+```
+everythingmac://search?q=kind%3Apdf%20annual%20report
+```
+
+The URL has exactly one percent-encoded `q` parameter. Build URLs with an encoder such as
+`URLComponents`; do not substitute query text into the URL string. Shell history can retain URLs,
+so avoid placing sensitive query text directly in a shell command.
+
 ## Planned command-line contract
 
 The `everythingmac` command is planned; it is not included in this release. Its

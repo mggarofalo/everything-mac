@@ -6,6 +6,7 @@ struct EverythingMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model: AppModel
     @StateObject private var presentation: SearchPresentationCoordinator
+    @StateObject private var presentationHost: SearchPresentationHost
     @StateObject private var shortcut: GlobalShortcutController
     @StateObject private var menuBar: MenuBarPreference
 
@@ -23,6 +24,8 @@ struct EverythingMacApp: App {
             }
         }
         _presentation = StateObject(wrappedValue: coordinator)
+        _presentationHost = StateObject(wrappedValue: SearchPresentationHost.shared)
+        SearchPresentationHost.shared.install(coordinator)
         _shortcut = StateObject(wrappedValue: GlobalShortcutController {
             coordinator.showCurrentSearch()
         })
@@ -34,18 +37,21 @@ struct EverythingMacApp: App {
             ContentView()
                 .environmentObject(model)
                 .environmentObject(presentation)
+                .environmentObject(presentationHost)
                 .background(SearchPresentationSceneHost())
                 .frame(minWidth: 800, minHeight: 500)
                 .onAppear {
                     shortcut.start()
                     appDelegate.onTerminate = { shortcut.stop() }
                 }
+                .onOpenURL { presentationHost.handle(url: $0) }
         }
         .commands { AppCommands(model: model) }
         Settings {
             SettingsView(showInMenuBar: $menuBar.isVisible)
                 .environmentObject(model)
                 .environmentObject(presentation)
+                .environmentObject(presentationHost)
                 .environmentObject(shortcut)
                 .background(SearchPresentationSceneHost())
         }
