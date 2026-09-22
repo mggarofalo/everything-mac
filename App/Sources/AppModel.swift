@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import IndexCore
 import Combine
 
@@ -33,6 +34,7 @@ final class AppModel: ObservableObject {
     // Bumped to ask the focused window to put the cursor in the search field (⌘F /
     // File ▸ Find). A counter, not a Bool, so repeated requests always fire onChange.
     @Published var focusSearchSignal = 0
+    @Published private(set) var focusSearchWindowNumber: Int?
 
     // The currently-selected result, resolved by stable path against the live
     // result set. nil once the file drops out of results, which auto-disables the
@@ -44,7 +46,9 @@ final class AppModel: ObservableObject {
         selectedPath = record?.path
     }
 
-    let index = SearchClient()
+    let index: SearchClient
+    private let preferences: UserDefaults
+    private var presentedDefaultsAreActive = false
     private var task: Task<Void, Never>?
     private var liveTask: Task<Void, Never>?
     private var searchSeq = 0
@@ -52,6 +56,11 @@ final class AppModel: ObservableObject {
     private var bootstrapTask: Task<Void, Never>?
     private var maintenanceTask: Task<Void, Never>?
     private var accessGeneration: UInt64 = 0
+
+    init(defaults: UserDefaults = .standard, index: SearchClient = SearchClient()) {
+        preferences = defaults
+        self.index = index
+    }
     func refreshFullDiskAccess(
         restartServicesIfDenied: Bool = false
     ) async -> ServiceAccessState {
@@ -178,7 +187,6 @@ final class AppModel: ObservableObject {
     }
 
     func queryChanged() {
-        savePrefs()   // also captures a Match-path toggle (shares this entry point)
         invalidateSearch()
         task = Task {
             // Cancelling this Swift task cannot retract an XPC request that was
@@ -193,8 +201,7 @@ final class AppModel: ObservableObject {
 
     // A live search option (case / whole-word / result limit) changed: persist it and
     // re-run immediately (no debounce — these come from a deliberate click, not typing).
-    func searchOptionsChanged() {
-        savePrefs()
+    private func searchOptionsChanged() {
         invalidateSearch()
         task = Task {
             await index.cancelPendingSearch()
@@ -205,7 +212,39 @@ final class AppModel: ObservableObject {
 
     // Persisted sort change from a column header or the View menu.
     func setSort(_ key: QueryEngine.SortKey, ascending asc: Bool) {
-        sortKey = key; ascending = asc; savePrefs(); Task { await runSearch() }
+        sortKey = key
+        ascending = asc
+        preferences.set(key.rawValue, forKey: "pref.sortKey")
+        preferences.set(asc, forKey: "pref.ascending")
+        Task { await runSearch() }
+    }
+
+    func setMatchPath(_ enabled: Bool) {
+        guard matchPath != enabled else { return }
+        matchPath = enabled
+        preferences.set(enabled, forKey: "pref.matchPath")
+        searchOptionsChanged()
+    }
+
+    func setCaseSensitive(_ enabled: Bool) {
+        guard caseSensitive != enabled else { return }
+        caseSensitive = enabled
+        preferences.set(enabled, forKey: "pref.caseSensitive")
+        searchOptionsChanged()
+    }
+
+    func setWholeWord(_ enabled: Bool) {
+        guard wholeWord != enabled else { return }
+        wholeWord = enabled
+        preferences.set(enabled, forKey: "pref.wholeWord")
+        searchOptionsChanged()
+    }
+
+    func setResultLimit(_ limit: Int) {
+        guard resultLimit != limit else { return }
+        resultLimit = limit
+        preferences.set(limit, forKey: "pref.resultLimit")
+        searchOptionsChanged()
     }
 
     func runSearch() async {
@@ -236,7 +275,10 @@ final class AppModel: ObservableObject {
         }
     }
 
-    func focusSearch() { focusSearchSignal &+= 1 }
+    func focusSearch(in window: NSWindow? = NSApp.keyWindow) {
+        focusSearchWindowNumber = window?.windowNumber
+        focusSearchSignal &+= 1
+    }
 
     func runPresentedQuery(_ text: String) {
         let defaults = PresentedSearchDefaults()
@@ -248,6 +290,7 @@ final class AppModel: ObservableObject {
         wholeWord = defaults.wholeWord
         usesRegularExpression = defaults.usesRegularExpression
         resultLimit = defaults.resultLimit
+        presentedDefaultsAreActive = true
         select(nil)
         invalidateSearch()
         task = Task {
@@ -267,7 +310,8 @@ final class AppModel: ObservableObject {
     // MARK: - Search preference persistence (UserDefaults)
 
     func loadPrefs() {
-        let d = UserDefaults.standard
+        guard !presentedDefaultsAreActive else { return }
+        let d = preferences
         matchPath = d.bool(forKey: "pref.matchPath")
         caseSensitive = d.bool(forKey: "pref.caseSensitive")
         wholeWord = d.bool(forKey: "pref.wholeWord")
@@ -280,17 +324,6 @@ final class AppModel: ObservableObject {
             sortKey = persistedSortKey
         }
         if d.object(forKey: "pref.ascending") != nil { ascending = d.bool(forKey: "pref.ascending") }
-    }
-
-    func savePrefs() {
-        let d = UserDefaults.standard
-        d.set(matchPath, forKey: "pref.matchPath")
-        d.set(caseSensitive, forKey: "pref.caseSensitive")
-        d.set(wholeWord, forKey: "pref.wholeWord")
-        d.set(usesRegularExpression, forKey: "pref.usesRegularExpression")
-        d.set(resultLimit, forKey: "pref.resultLimit")
-        d.set(sortKey.rawValue, forKey: "pref.sortKey")
-        d.set(ascending, forKey: "pref.ascending")
     }
 
     // Force a full whole-disk rescan (File ▸ Rebuild Index). Same shape as applyRules

@@ -15,6 +15,7 @@ struct ContentView: View {
     @State private var accessState = AccessState.checking
     @State private var refreshServicesAfterSettings = false
     @FocusState private var searchFocused: Bool
+    @State private var searchWindowNumber: Int?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -53,13 +54,13 @@ struct ContentView: View {
                 Divider()
             }
             SearchField(text: $model.query,
-                        matchPath: $model.matchPath,
-                        caseSensitive: $model.caseSensitive,
-                        wholeWord: $model.wholeWord,
+                        matchPath: Binding(get: { model.matchPath }, set: model.setMatchPath),
+                        caseSensitive: Binding(get: { model.caseSensitive }, set: model.setCaseSensitive),
+                        wholeWord: Binding(get: { model.wholeWord }, set: model.setWholeWord),
                         focused: $searchFocused,
                         focusSignal: model.focusSearchSignal,
-                        onTextChange: { model.queryChanged() },
-                        onOptionsChange: { model.searchOptionsChanged() })
+                        isFocusTarget: model.focusSearchWindowNumber == searchWindowNumber,
+                        onTextChange: { model.queryChanged() })
             Divider()
             ZStack {
                 ResultsTable(rows: model.results,
@@ -86,7 +87,7 @@ struct ContentView: View {
             StatusBar(total: model.total, shown: model.results.count, scanning: model.scanning)
         }
         .background(.regularMaterial)
-        .background(SearchWindowRegistration())
+        .background(SearchWindowRegistration { searchWindowNumber = $0?.windowNumber })
         .onAppear {
             refreshAccess()
             searchFocused = true
@@ -97,7 +98,10 @@ struct ContentView: View {
             refreshServicesAfterSettings = false
             refreshAccess(restartServicesIfDenied: shouldRestart)
         }
-        .onChange(of: model.focusSearchSignal) { searchFocused = true }
+        .onChange(of: model.focusSearchSignal) {
+            guard model.focusSearchWindowNumber == searchWindowNumber else { return }
+            searchFocused = true
+        }
     }
 
     private func refreshAccess(restartServicesIfDenied: Bool = false) {

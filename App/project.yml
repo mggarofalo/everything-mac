@@ -7,6 +7,26 @@ packages:
   IndexCore:
     path: ..
 targets:
+  EverythingMacAppModelTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Shared
+      - Sources/AppModel.swift
+      - Sources/FileIcons.swift
+      - Sources/FullDiskAccess.swift
+      - Sources/LaunchAtLogin.swift
+      - Sources/ResultActions.swift
+      - Sources/SearchClient.swift
+      - Sources/SearchPresentationCoordinator.swift
+      - Tests/AppModelTests
+    dependencies:
+      - package: IndexCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.app-model-tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "6.0"
   EverythingMacPresentationTests:
     type: bundle.unit-test
     platform: macOS

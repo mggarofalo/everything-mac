@@ -10,14 +10,14 @@ struct EverythingMacApp: App {
     init() {
         let appModel = AppModel()
         _model = StateObject(wrappedValue: appModel)
-        _presentation = StateObject(wrappedValue: SearchPresentationCoordinator { [weak appModel] request in
+        _presentation = StateObject(wrappedValue: SearchPresentationCoordinator { [weak appModel] request, window in
             guard let appModel else { return }
             switch request {
             case .showCurrentSearch:
-                appModel.focusSearch()
+                appModel.focusSearch(in: window)
             case let .runQuery(query):
                 appModel.runPresentedQuery(query)
-                appModel.focusSearch()
+                appModel.focusSearch(in: window)
             }
         })
     }

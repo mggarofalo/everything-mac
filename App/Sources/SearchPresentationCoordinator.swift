@@ -62,9 +62,9 @@ final class SearchPresentationCoordinator: ObservableObject {
     private var isOpeningSearchWindow = false
     private var searchWindows: [NSWindow] = []
     private var openSearchWindow: (() -> Void)?
-    private let deliver: (SearchPresentationRequest) -> Void
+    private let deliver: (SearchPresentationRequest, NSWindow) -> Void
 
-    init(deliver: @escaping (SearchPresentationRequest) -> Void) {
+    init(deliver: @escaping (SearchPresentationRequest, NSWindow) -> Void) {
         self.deliver = deliver
     }
 
@@ -116,7 +116,7 @@ final class SearchPresentationCoordinator: ObservableObject {
         activate(window)
         guard let request = queue.consumeWhenReady(sceneIsReady: sceneIsReady,
                                                    searchWindowIsReady: true) else { return }
-        deliver(request)
+        deliver(request, window)
     }
 
     private func enqueue(_ request: SearchPresentationRequest) {

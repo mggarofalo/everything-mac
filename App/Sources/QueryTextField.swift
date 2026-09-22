@@ -8,6 +8,7 @@ struct QueryTextField: NSViewRepresentable {
     @Binding var text: String
     var focused: FocusState<Bool>.Binding
     var focusSignal: Int
+    var isFocusTarget: Bool
     var onTextChange: () -> Void
     var onTab: (_ text: String, _ selection: NSRange) -> String?
 
@@ -35,7 +36,13 @@ struct QueryTextField: NSViewRepresentable {
         view.placeholder.isHidden = !text.isEmpty
         let shouldRefocus = context.coordinator.focusSignal != focusSignal
         context.coordinator.focusSignal = focusSignal
-        if (focused.wrappedValue || shouldRefocus), view.window?.firstResponder !== view.textView {
+        if shouldRefocus, isFocusTarget {
+            if view.window?.firstResponder !== view.textView {
+                view.window?.makeFirstResponder(view.textView)
+            }
+            view.textView.selectAll(nil)
+        } else if focused.wrappedValue, !shouldRefocus,
+                  view.window?.firstResponder !== view.textView {
             view.window?.makeFirstResponder(view.textView)
         }
     }

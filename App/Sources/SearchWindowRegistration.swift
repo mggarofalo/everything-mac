@@ -5,16 +5,19 @@ import SwiftUI
 /// incidental AppKit windows are never candidates for external presentation.
 struct SearchWindowRegistration: NSViewRepresentable {
     @EnvironmentObject private var presentation: SearchPresentationCoordinator
+    var onWindowChange: (NSWindow?) -> Void
 
     func makeNSView(context: Context) -> RegistrationView {
         let view = RegistrationView()
         view.didMoveToWindow = { [weak presentation] window in
             guard let window else { return }
+            onWindowChange(window)
             presentation?.registerSearchWindow(window)
         }
         view.didLeaveWindow = { [weak presentation] window in
             guard let window else { return }
             presentation?.unregisterSearchWindow(window)
+            onWindowChange(nil)
         }
         return view
     }
