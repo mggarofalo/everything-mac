@@ -83,8 +83,18 @@ You can also choose to show an EverythingMac menu-bar entry. The menu opens sear
 or explicitly quits the UI app. Both optional access points remain available after closing the
 last window. Quitting removes them while the indexing and search background services continue.
 
-Shortcuts also provides a **Search EverythingMac** action with a query field. It opens the app
-and runs that query in the normal search interface.
+To use Shortcuts, create a shortcut, search the action library for **Search EverythingMac**,
+and add that action. Set its **Query** to a search such as `filetype:pdf annual`, or choose
+**Ask Each Time** for a reusable search shortcut. Running it opens EverythingMac and selects
+the supplied query in its search field. Results appear in EverythingMac.
+
+On macOS 26 or later, Spotlight can also offer **Search EverythingMac** as an action.
+Open Spotlight with Command-Space, press Command-3 to narrow to actions, and search for
+**Search EverythingMac**. Select the result labeled **EverythingMac**, fill in its query,
+and run it. This invokes the app; it does not add the private index to Spotlight's file results.
+The action has been observed in Spotlight on macOS 27; Shortcuts execution has been verified
+there. macOS 14 supports the Shortcuts entry point, but its interactive execution has not yet
+been verified in the compatibility runner.
 
 Automation can open a search with the canonical URL form:
 
