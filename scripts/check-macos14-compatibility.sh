@@ -66,8 +66,9 @@ if [[ "$url_scheme" != "everythingmac" ]]; then
   exit 1
 fi
 require_metadata_text "SearchEverythingMacIntent"
-require_metadata_text "EverythingMacShortcuts"
 require_metadata_text 'Search ${query}'
+require_metadata_text 'Search in ${applicationName}'
+require_metadata_text '"openAppWhenRun":true'
 
 /usr/bin/osascript - "$app_path" <<'APPLESCRIPT'
 on run argv
