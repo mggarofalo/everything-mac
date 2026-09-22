@@ -88,6 +88,48 @@ final class ServiceProtocolTests: XCTestCase {
         XCTAssertEqual(recorded.values, [latestID])
     }
 
+    func testGlobalAdmissionRotatesFirstChanceBetweenPendingClients() {
+        let admission = SearchAdmission(capacity: 1, backgroundCapacity: 1)
+        let first = SearchSessionState<String>(capacity: 1)
+        let second = SearchSessionState<String>(capacity: 1)
+        let recorded = PendingLaunchBox()
+        let firstObserver = admission.observe {
+            if let launch = first.takeReady(
+                acquire: { admission.acquire(interactive: true) },
+                releaseWithoutNotification: {
+                    admission.release(interactive: true, notify: false)
+                }
+            ) { recorded.record(launch.id) }
+        }
+        let secondObserver = admission.observe {
+            if let launch = second.takeReady(
+                acquire: { admission.acquire(interactive: true) },
+                releaseWithoutNotification: {
+                    admission.release(interactive: true, notify: false)
+                }
+            ) { recorded.record(launch.id) }
+        }
+        XCTAssertTrue(admission.acquire(interactive: true))
+        let firstID = UUID()
+        let secondID = UUID()
+        guard case .accepted = first.offer("first", id: firstID),
+              case .accepted = second.offer("second", id: secondID) else {
+            return XCTFail("Expected pending searches")
+        }
+        admission.release(interactive: true)
+        XCTAssertEqual(recorded.values, [firstID])
+
+        first.finish(firstID)
+        guard case .accepted = first.offer("first again", id: UUID()) else {
+            return XCTFail("Expected first client to stay pending")
+        }
+        admission.release(interactive: true)
+        XCTAssertEqual(recorded.values, [firstID, secondID])
+        admission.removeObserver(firstObserver)
+        admission.removeObserver(secondObserver)
+        admission.release(interactive: true)
+    }
+
     func testClosingSaturatedSessionReturnsPendingOnlyOnce() {
         let state = SearchSessionState<String>(capacity: 1)
         let active = state.beginIndependent(UUID())!

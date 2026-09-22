@@ -339,6 +339,8 @@ final class SearchAdmission: @unchecked Sendable {
     private var active = 0
     private var background = 0
     private var observers: [UUID: @Sendable () -> Void] = [:]
+    private var observerOrder: [UUID] = []
+    private var nextObserver = 0
 
     init(capacity: Int = 32, backgroundCapacity: Int = 2) {
         self.capacity = capacity
@@ -350,6 +352,7 @@ final class SearchAdmission: @unchecked Sendable {
         defer { lock.unlock() }
         let id = UUID()
         observers[id] = callback
+        observerOrder.append(id)
         return id
     }
 
@@ -357,6 +360,8 @@ final class SearchAdmission: @unchecked Sendable {
         guard let id else { return }
         lock.lock()
         observers.removeValue(forKey: id)
+        observerOrder.removeAll { $0 == id }
+        nextObserver = observerOrder.isEmpty ? 0 : nextObserver % observerOrder.count
         lock.unlock()
     }
 
@@ -373,9 +378,19 @@ final class SearchAdmission: @unchecked Sendable {
         lock.lock()
         active -= 1
         if !interactive { background -= 1 }
-        let callbacks = notify ? Array(observers.values) : []
+        let callbacks = notify ? rotatedObservers() : []
         lock.unlock()
         callbacks.forEach { $0() }
+    }
+
+    /// Called while holding lock. Rotate the first chance to claim a freed slot.
+    private func rotatedObservers() -> [@Sendable () -> Void] {
+        guard !observerOrder.isEmpty else { return [] }
+        let start = nextObserver % observerOrder.count
+        nextObserver = (start + 1) % observerOrder.count
+        return (0..<observerOrder.count).compactMap { offset in
+            observers[observerOrder[(start + offset) % observerOrder.count]]
+        }
     }
 }
 
