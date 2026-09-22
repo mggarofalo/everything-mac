@@ -7,6 +7,11 @@
   while the UI has no open windows and are removed by an explicit Quit.
 - Add a Shortcuts search action and the `everythingmac://search?q=` automation URL scheme.
 
+- Define the bounded v1 command-line contract ahead of the command's release.
+  Search service replies now distinguish invalid queries, permission denial,
+  cancellation, and an index with no published snapshot, and report the
+  effective limit, exact truncation, and scan state for successful searches.
+
 ## 0.9.7
 
 - Keep Developer ID and notarization credentials in macOS Keychain, validate

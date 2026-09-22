@@ -271,6 +271,22 @@ final class SearchResultSortingTests: XCTestCase {
                                           in: store, isCancelled: { true }).isEmpty)
     }
 
+    func testEqualNamesUseFullPathTieBreak() {
+        var store = FileStore()
+        let root = store.append(name: "/", parent: FileStore.noParent, size: 0,
+                                mtime: 0, isDir: true, volID: 1)
+        let z = store.append(name: "z", parent: root, size: 0, mtime: 0,
+                             isDir: true, volID: 1)
+        let a = store.append(name: "a", parent: root, size: 0, mtime: 0,
+                             isDir: true, volID: 1)
+        let zFile = store.append(name: "same", parent: z, size: 0, mtime: 0,
+                                 isDir: false, volID: 1)
+        let aFile = store.append(name: "same", parent: a, size: 0, mtime: 0,
+                                 isDir: false, volID: 1)
+        XCTAssertEqual(QueryEngine().sortedPrefix([zFile, aFile], by: .name,
+                                                   ascending: true, limit: 1, in: store), [aFile])
+    }
+
     private func sortingStore() -> (FileStore, [UInt32]) {
         var store = FileStore()
         let root = store.append(name: "/", parent: FileStore.noParent, size: 0,
