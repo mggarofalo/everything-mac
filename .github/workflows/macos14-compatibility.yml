@@ -16,7 +16,7 @@ jobs:
     timeout-minutes: 20
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
-      DERIVED_DATA: ${{ runner.temp }}/EverythingMac-macos14-derived-data
+      DERIVED_DATA: ${{ github.workspace }}/.EverythingMac-macos14-derived-data
     steps:
       - uses: actions/checkout@v6
       - name: Select the macOS 14 runner toolchain
