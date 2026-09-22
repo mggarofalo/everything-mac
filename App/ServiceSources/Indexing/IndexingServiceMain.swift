@@ -111,6 +111,9 @@ private final class IndexService: NSObject, EverythingMacServiceProtocol, @unche
             let status = await index.serviceStatus(hasFullDiskAccess: FullDiskAccess.isGranted())
             return .success(status)
         case .search:
+            guard FullDiskAccess.isGranted() else {
+                return .failure(ServiceErrorCode.permissionDenied.message, code: .permissionDenied)
+            }
             let payload = try requirePayload(request)
             let query = try JSONDecoder().decode(SearchRequest.self, from: payload)
             guard let searchGeneration else { return .failure("Missing search generation") }

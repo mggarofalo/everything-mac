@@ -60,7 +60,7 @@ actor IndexActor {
         self.rules = rules
         self.liveRules = rules
         self.accessEnabled = accessEnabled
-        self.hasPublishedSnapshot = accessEnabled
+        self.hasPublishedSnapshot = true
     }
 
     var totalCount: Int { store.liveCount }
@@ -107,11 +107,18 @@ actor IndexActor {
                         wholeWord: Bool = false, usesRegularExpression: Bool = false,
                         sort: QueryEngine.SortKey, ascending: Bool, limit: Int = 5000,
                         isCancelled: @escaping @Sendable () -> Bool = { false }) async throws -> SearchResponse {
-        guard accessEnabled else { throw ServiceErrorCode.permissionDenied }
         guard hasPublishedSnapshot else { throw ServiceErrorCode.indexNotReady }
+        guard accessEnabled else { throw ServiceErrorCode.permissionDenied }
         let query = Query(text: text, matchPath: matchPath, caseInsensitive: caseInsensitive,
                           wholeWord: wholeWord, usesRegularExpression: usesRegularExpression)
-        guard query.plan.isValid else { throw ServiceErrorCode.invalidQuery }
+        let plan = query.plan
+        guard plan.isValid else { throw ServiceErrorCode.invalidQuery }
+        if let pattern = plan.regularExpression {
+            let options: NSRegularExpression.Options = caseInsensitive ? [.caseInsensitive] : []
+            guard (try? NSRegularExpression(pattern: pattern, options: options)) != nil else {
+                throw ServiceErrorCode.invalidQuery
+            }
+        }
         // Re-scan only when the query (not the sort) changed. The key folds in every
         // flag that changes which ids match — matchPath, case sensitivity, whole-word,
         // and regular-expression mode —

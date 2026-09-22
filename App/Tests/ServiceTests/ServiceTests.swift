@@ -134,6 +134,14 @@ final class IndexActorBoundaryTests: XCTestCase {
     }
 
     func testSearchReportsInvalidQueryAndPermissionDenial() async {
+        let cold = IndexActor()
+        do {
+            _ = try await cold.searchResponse("x", matchPath: false,
+                                              sort: .name, ascending: true)
+            XCTFail("Expected an unpublished index")
+        } catch {
+            XCTAssertEqual(error as? ServiceErrorCode, .indexNotReady)
+        }
         let denied = IndexActor(store: FileStore(), rules: ExcludeRules(), accessEnabled: false)
         do {
             _ = try await denied.searchResponse("x", matchPath: false,
@@ -149,6 +157,20 @@ final class IndexActorBoundaryTests: XCTestCase {
             XCTFail("Expected invalid query")
         } catch {
             XCTAssertEqual(error as? ServiceErrorCode, .invalidQuery)
+        }
+    }
+
+    func testMalformedRegularExpressionsAreInvalidQueries() async {
+        let actor = IndexActor(store: FileStore(), rules: ExcludeRules(), accessEnabled: true)
+        for (source, raw) in [("[", true), ("/regex [", false), ("regex:[", false)] {
+            do {
+                _ = try await actor.searchResponse(source, matchPath: false,
+                                                   usesRegularExpression: raw,
+                                                   sort: .name, ascending: true)
+                XCTFail("Expected invalid query for \(source)")
+            } catch {
+                XCTAssertEqual(error as? ServiceErrorCode, .invalidQuery)
+            }
         }
     }
 
