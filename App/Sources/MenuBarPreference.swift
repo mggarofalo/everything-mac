@@ -14,5 +14,10 @@ final class MenuBarPreference: ObservableObject {
         isVisible = defaults.bool(forKey: Self.preferenceKey)
     }
 
+    func setVisible(_ visible: Bool) {
+        guard visible != isVisible else { return }
+        isVisible = visible
+    }
+
     private static let preferenceKey = "pref.showInMenuBar"
 }
