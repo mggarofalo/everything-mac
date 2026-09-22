@@ -83,6 +83,10 @@ their indexer work; output already delivered cannot be recalled. Enabling it
 allows any local process running the signed CLI as your user to receive search
 results. The signature authenticates the executable, not its parent script or
 invoking process. The CLI is planned and is not yet included in this release.
+The preference file and index cache are protected from other user accounts,
+not from software already running as the same user: such software can edit the
+preference or read the cache directly. The opt-in controls the supported XPC
+search path; it is not a same-user sandbox boundary.
 
 ## External search entry points
 
