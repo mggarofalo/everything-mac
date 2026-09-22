@@ -1,0 +1,223 @@
+import Foundation
+import IndexCore
+
+struct CLIOptions: Equatable {
+    enum Format: String { case paths, json }
+    let query: String
+    let format: Format
+    let usesNull: Bool
+    let limit: Int
+    let timeout: TimeInterval
+    let matchPath: Bool
+    let caseSensitive: Bool
+    let wholeWord: Bool
+
+    static let help = """
+    Usage: everythingmac search [options] -- <query>
+
+    Options:
+      --format paths|json  Output format (default: paths)
+      --null               Separate paths with NUL bytes
+      --limit N            Maximum results, 1...10000 (default: 1000)
+      --timeout SECONDS    End-to-end deadline (default: 30)
+      --match-path         Match ancestor path components
+      --case-sensitive     Match case exactly
+      --whole-word         Match whole words
+      --help               Show this help
+      --version            Show the version
+
+    Examples:
+      everythingmac search -- 'kind:pdf "annual report"'
+      everythingmac search --match-path -- 'path:~/Documents'
+      everythingmac search --format json -- 'rx:^report[0-9]+$'
+      everythingmac search --null -- 'kind:image' | xargs -0 -n1 printf '%s\\n'
+    """
+
+    static func parse(arguments: [String]) throws -> CLIOptions? {
+        guard !arguments.isEmpty else { throw CLIError.invalidArguments("Expected a command.") }
+        if arguments == ["--help"] || arguments == ["help"] { return nil }
+        if arguments == ["--version"] { return nil }
+        guard arguments.first == "search" else { throw CLIError.invalidArguments("Expected `search`.") }
+        var format: Format = .paths
+        var usesNull = false
+        var limit = 1_000
+        var timeout: TimeInterval = 30
+        var matchPath = false
+        var caseSensitive = false
+        var wholeWord = false
+        var query: String?
+        var index = 1
+        while index < arguments.count {
+            let argument = arguments[index]
+            if argument == "--" {
+                let values = Array(arguments.dropFirst(index + 1))
+                guard values.count == 1 else { throw CLIError.invalidArguments("Provide exactly one query after `--`.") }
+                query = values[0]
+                break
+            }
+            switch argument {
+            case "--format":
+                index += 1
+                guard index < arguments.count, let value = Format(rawValue: arguments[index]) else {
+                    throw CLIError.invalidArguments("`--format` must be `paths` or `json`.")
+                }
+                format = value
+            case "--null": usesNull = true
+            case "--limit":
+                index += 1
+                guard index < arguments.count, let value = Int(arguments[index]), (1...10_000).contains(value) else {
+                    throw CLIError.invalidArguments("`--limit` must be an integer from 1 to 10000.")
+                }
+                limit = value
+            case "--timeout":
+                index += 1
+                guard index < arguments.count, let value = TimeInterval(arguments[index]), value > 0 else {
+                    throw CLIError.invalidArguments("`--timeout` must be positive seconds.")
+                }
+                timeout = value
+            case "--match-path": matchPath = true
+            case "--case-sensitive": caseSensitive = true
+            case "--whole-word": wholeWord = true
+            default: throw CLIError.invalidArguments("Unknown option `\(argument)`.")
+            }
+            index += 1
+        }
+        guard let query else { throw CLIError.invalidArguments("Provide a query after `--`.") }
+        guard !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !query.utf8.contains(0), query.lengthOfBytes(using: .utf8) <= 16 * 1024 else {
+            throw CLIError.invalidArguments("Query must be nonblank, contain no NUL bytes, and be at most 16 KiB.")
+        }
+        guard !usesNull || format == .paths else { throw CLIError.invalidArguments("`--null` requires `--format paths`.") }
+        return CLIOptions(query: query, format: format, usesNull: usesNull, limit: limit, timeout: timeout,
+                          matchPath: matchPath, caseSensitive: caseSensitive, wholeWord: wholeWord)
+    }
+}
+
+enum CLIError: Error, Equatable {
+    case invalidArguments(String), unavailable(String), timeout, internalError(String)
+
+    var exitCode: Int32 {
+        switch self {
+        case .invalidArguments: 2
+        case .unavailable: 3
+        case .timeout: 4
+        case .internalError: 5
+        }
+    }
+
+    var message: String {
+        switch self {
+        case let .invalidArguments(message), let .unavailable(message), let .internalError(message): message
+        case .timeout: "Search timed out."
+        }
+    }
+}
+
+protocol CLISearchTransport: Sendable {
+    func search(_ request: SearchRequest, deadline: Date) async throws -> SearchResponse
+    func cancel(_ requestID: UUID) async
+}
+
+struct CLIResult: Equatable {
+    let exitCode: Int32
+    let stdout: Data
+    let stderr: Data
+}
+
+struct CLIRunner {
+    let transport: any CLISearchTransport
+    let now: @Sendable () -> Date
+
+    init(transport: any CLISearchTransport, now: @escaping @Sendable () -> Date = Date.init) {
+        self.transport = transport
+        self.now = now
+    }
+
+    func run(arguments: [String]) async -> CLIResult {
+        do {
+            if arguments == ["--help"] || arguments == ["help"] {
+                return success(stdout: Data((CLIOptions.help + "\n").utf8))
+            }
+            if arguments == ["--version"] {
+                return success(stdout: Data("EverythingMac 0.9.7\n".utf8))
+            }
+            let options = try CLIOptions.parse(arguments: arguments)
+            guard let options else { return success(stdout: Data((CLIOptions.help + "\n").utf8)) }
+            let requestID = UUID()
+            let request = SearchRequest(text: options.query, matchPath: options.matchPath,
+                                        caseInsensitive: !options.caseSensitive, wholeWord: options.wholeWord,
+                                        usesRegularExpression: false, sort: .name, ascending: true,
+                                        limit: options.limit, supersedeExisting: false)
+            let response = try await response(for: request, requestID: requestID, timeout: options.timeout)
+            return success(stdout: format(response, as: options))
+        } catch let error as CLIError {
+            return failure(error)
+        } catch {
+            return failure(.internalError(error.localizedDescription))
+        }
+    }
+
+    private func response(for request: SearchRequest, requestID: UUID, timeout: TimeInterval) async throws -> SearchResponse {
+        let deadline = now().addingTimeInterval(timeout)
+        do {
+            return try await withThrowingTaskGroup(of: SearchResponse.self) { group in
+                group.addTask { try await transport.search(request, deadline: deadline) }
+                group.addTask {
+                    try await Task.sleep(for: .seconds(timeout))
+                    throw CLIError.timeout
+                }
+                guard let first = try await group.next() else { throw CLIError.internalError("No service response.") }
+                group.cancelAll()
+                return first
+            }
+        } catch is CancellationError {
+            await transport.cancel(requestID)
+            throw CLIError.timeout
+        } catch let error as CLIError {
+            await transport.cancel(requestID)
+            throw error
+        }
+    }
+
+    private func format(_ response: SearchResponse, as options: CLIOptions) -> Data {
+        switch options.format {
+        case .paths:
+            let delimiter = options.usesNull ? "\0" : "\n"
+            return Data((response.records.map(\.path).joined(separator: delimiter) + (response.records.isEmpty ? "" : delimiter)).utf8)
+        case .json:
+            let formatter = ISO8601DateFormatter()
+            let records = response.records.map { record in
+                CLIJSONResult(path: record.path, name: record.name, isDirectory: record.isDir,
+                              sizeBytes: record.id == 0 ? nil : Int64(exactly: record.size),
+                              modifiedAt: record.id == 0 ? nil : formatter.string(
+                                  from: Date(timeIntervalSince1970: TimeInterval(record.mtime))
+                              ))
+            }
+            let envelope = CLIJSONEnvelope(schemaVersion: 1, results: records, returnedCount: records.count,
+                                           limit: response.limit, truncated: response.truncated, scanning: response.scanning)
+            return (try? JSONEncoder().encode(envelope)) ?? Data()
+        }
+    }
+
+    private func success(stdout: Data) -> CLIResult { CLIResult(exitCode: 0, stdout: stdout, stderr: Data()) }
+    private func failure(_ error: CLIError) -> CLIResult {
+        CLIResult(exitCode: error.exitCode, stdout: Data(), stderr: Data((error.message + "\n").utf8))
+    }
+}
+
+private struct CLIJSONEnvelope: Encodable {
+    let schemaVersion: Int
+    let results: [CLIJSONResult]
+    let returnedCount: Int
+    let limit: Int
+    let truncated: Bool
+    let scanning: Bool
+}
+
+private struct CLIJSONResult: Encodable {
+    let path: String
+    let name: String
+    let isDirectory: Bool
+    let sizeBytes: Int64?
+    let modifiedAt: String?
+}

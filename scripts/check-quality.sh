@@ -97,3 +97,10 @@ xcodebuild -project App/EverythingMac.xcodeproj \
   -configuration Debug \
   CODE_SIGNING_ALLOWED=NO \
   test
+
+echo "Running command-line tests..."
+xcodebuild -project App/EverythingMac.xcodeproj \
+  -scheme EverythingMacCLITests \
+  -configuration Debug \
+  CODE_SIGNING_ALLOWED=NO \
+  test
