@@ -2,11 +2,13 @@
 
 ## Unreleased
 
+- Isolate search cancellation per trusted client connection, bound queued search
+  work, and report cancellation or overload explicitly instead of returning an
+  empty successful result.
 - Add an opt-in global shortcut, with conflict reporting and a configurable physical key
   combination, plus an optional menu-bar entry for search and settings. Both remain available
   while the UI has no open windows and are removed by an explicit Quit.
 - Add a Shortcuts search action and the `everythingmac://search?q=` automation URL scheme.
-
 - Define the bounded v1 command-line contract ahead of the command's release.
   Search service replies now distinguish invalid queries, permission denial,
   cancellation, and an index with no published snapshot, and report the

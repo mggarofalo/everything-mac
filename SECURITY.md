@@ -59,6 +59,14 @@ EverythingMac.app → EverythingMacSearchService → EverythingMacIndexingServic
 
 Each XPC listener validates the connecting process with Security.framework. It requires the expected executable identifier and the same signing team as the receiving process. A process running under the same user account is not accepted on that fact alone.
 
+Each accepted application connection receives its own forwarding session and
+indexer connection. The indexer scopes cancellation to that trusted connection;
+request IDs in a caller's payload cannot cancel searches owned by another
+connection. The search service assigns the request's interactive priority from
+the validated peer identity rather than trusting the caller's priority field.
+All sessions still use the same index and Full Disk Access remains
+exclusive to the indexer.
+
 The search service accepts `com.everythingmac.app`. The indexer accepts
 `EverythingMacSearchService` and shares `com.everythingmac.app` with the main
 application for Full Disk Access. Changes to these signing identifiers must
