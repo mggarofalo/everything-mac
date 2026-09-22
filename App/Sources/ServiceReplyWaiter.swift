@@ -1,7 +1,12 @@
 import Foundation
 
+enum ServiceReplyTimeout: Error {
+    case elapsed
+}
+
 // An XPC message can remain queued indefinitely when launchd cannot spawn the
-// service. Resolve status probes on a deadline, and ignore any later XPC reply.
+// service. A deadline can start a health probe or finish an unanswered ping;
+// whichever result completes the request first owns its continuation.
 final class ServiceReplyWaiter: @unchecked Sendable {
     private let lock = NSLock()
     private var completion: (@Sendable (Result<Data, Error>) -> Void)?
@@ -19,9 +24,17 @@ final class ServiceReplyWaiter: @unchecked Sendable {
     }
 
     func timeOut(after seconds: TimeInterval) {
+        onDeadline(after: seconds) { [self] in
+            finish(.failure(ServiceReplyTimeout.elapsed))
+        }
+    }
+
+    func onDeadline(after seconds: TimeInterval, perform action: @escaping @Sendable () -> Void) {
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + seconds) { [self] in
-            finish(.failure(CocoaError(.xpcConnectionReplyInvalid,
-                userInfo: [NSLocalizedDescriptionKey: "Background service did not respond in time"])))
+            lock.lock()
+            let isPending = completion != nil
+            lock.unlock()
+            if isPending { action() }
         }
     }
 }

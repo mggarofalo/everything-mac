@@ -91,6 +91,10 @@ actor SearchClient {
         try await call(.status, payload: Optional<Bool>.none, as: ServiceStatus.self)
     }
 
+    private func ping() async -> Bool {
+        (try? await call(.ping, payload: Optional<Bool>.none, as: Bool.self)) == true
+    }
+
     private func indexChanged() async {
         guard let status = try? await status() else { return }
         if status.scanning { onProgress?(status.totalCount) }
@@ -114,7 +118,17 @@ actor SearchClient {
         do {
             replyData = try await withCheckedThrowingContinuation { continuation in
                 let waiter = ServiceReplyWaiter { continuation.resume(with: $0) }
-                if operation == .status { waiter.timeOut(after: 3) }
+                if operation == .status {
+                    waiter.onDeadline(after: 3) { [self] in
+                        Task {
+                            if !(await ping()) {
+                                waiter.finish(.failure(ServiceReplyTimeout.elapsed))
+                            }
+                        }
+                    }
+                } else if operation == .ping {
+                    waiter.timeOut(after: 2)
+                }
                 let proxy = connection.remoteObjectProxyWithErrorHandler { error in
                     waiter.finish(.failure(error))
                 }
@@ -129,14 +143,15 @@ actor SearchClient {
                 service.perform(request) { waiter.finish(.success($0)) }
             }
         } catch {
-            if self.connection === connection {
+            if operation != .ping && self.connection === connection {
                 resetConnection()
             }
             throw error
         }
         let envelope = try JSONDecoder().decode(ServiceReply.self, from: replyData)
         if let error = envelope.error {
-            if envelope.errorCode == .serviceUnavailable, self.connection === connection {
+            if envelope.errorCode == .serviceUnavailable,
+               operation != .ping, self.connection === connection {
                 resetConnection()
             }
             throw NSError(domain: "EverythingMac", code: 3,

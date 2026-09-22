@@ -107,7 +107,7 @@ final class ServiceProtocolTests: XCTestCase {
         XCTAssertTrue(SearchClientRole.cli.allows(.search))
         XCTAssertTrue(SearchClientRole.cli.allows(.status))
         XCTAssertTrue(SearchClientRole.cli.allows(.cancelSearch))
-        for operation in [ServiceOperation.rebuild, .getRules, .setRules,
+        for operation in [ServiceOperation.ping, .rebuild, .getRules, .setRules,
                           .getAutomationAccess, .setAutomationAccess] {
             XCTAssertFalse(SearchClientRole.cli.allows(operation))
             XCTAssertTrue(SearchClientRole.app.allows(operation))
@@ -163,7 +163,7 @@ final class ServiceProtocolTests: XCTestCase {
         let enabled = try JSONEncoder().encode(true)
         XCTAssertNil(try request(app, .setAutomationAccess, payload: enabled).errorCode)
         XCTAssertTrue(access.isEnabled)
-        for operation in [ServiceOperation.rebuild, .setRules, .getRules,
+        for operation in [ServiceOperation.ping, .rebuild, .setRules, .getRules,
                           .setAutomationAccess, .getAutomationAccess] {
             XCTAssertEqual(try request(cli, operation, payload: enabled).errorCode, .permissionDenied)
         }
@@ -442,7 +442,7 @@ final class ServiceProtocolTests: XCTestCase {
 
     func testEveryOperationRoundTrips() throws {
         let requestID = UUID()
-        for operation in [ServiceOperation.status, .search, .cancelSearch, .rebuild,
+        for operation in [ServiceOperation.status, .ping, .search, .cancelSearch, .rebuild,
                           .getRules, .setRules] {
             let request = ServiceRequest(operation: operation, payload: Data([1, 2, 3]),
                                          requestID: requestID)

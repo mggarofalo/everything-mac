@@ -58,6 +58,8 @@ private final class IndexService: @unchecked Sendable {
         case .status:
             let status = await index.serviceStatus(hasFullDiskAccess: FullDiskAccess.isGranted())
             return .success(status)
+        case .ping:
+            return .success(true)
         case .search:
             return try await handleSearch(request, token: token)
         case .cancelSearch:
@@ -145,11 +147,15 @@ private final class IndexSession: NSObject, EverythingMacServiceProtocol, @unche
             send(.failure("Index session closed", code: .serviceUnavailable), to: reply)
             return
         }
-        service.ensureStarted()
         guard let request = try? JSONDecoder().decode(ServiceRequest.self, from: data) else {
             send(.failure("Invalid service request"), to: reply)
             return
         }
+        if request.operation == .ping {
+            send(.success(true), to: reply)
+            return
+        }
+        service.ensureStarted()
         if request.operation == .cancelSearch {
             if let cancelled = state.cancel(request.requestID) {
                 send(.failure(ServiceErrorCode.cancelled.message, code: .cancelled),
