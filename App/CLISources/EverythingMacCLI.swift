@@ -8,11 +8,16 @@ enum EverythingMacCLI {
         signal(SIGPIPE, SIG_IGN)
         let task = Task { await CLIRunner(transport: XPCSearchTransport()).run(arguments: Array(CommandLine.arguments.dropFirst())) }
         let interruption = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+        let termination = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
         signal(SIGINT, SIG_IGN)
+        signal(SIGTERM, SIG_IGN)
         interruption.setEventHandler { task.cancel() }
+        termination.setEventHandler { task.cancel() }
         interruption.resume()
+        termination.resume()
         let result = await task.value
         interruption.cancel()
+        termination.cancel()
         FileHandle.standardOutput.write(result.stdout)
         FileHandle.standardError.write(result.stderr)
         exit(result.exitCode)
