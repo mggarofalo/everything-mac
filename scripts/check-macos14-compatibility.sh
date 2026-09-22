@@ -37,6 +37,9 @@ let hasWindow = windows.contains { window in
     (window[kCGWindowOwnerPID as String] as? Int) == processID
         && (window[kCGWindowLayer as String] as? Int) == 0
 }
+exit(hasWindow ? EXIT_SUCCESS : EXIT_FAILURE)
+SWIFT
+}
 
 require_metadata_text() {
   local text="$1"
@@ -44,9 +47,6 @@ require_metadata_text() {
     echo "App Intents metadata does not contain: $text" >&2
     exit 1
   fi
-}
-exit(hasWindow ? EXIT_SUCCESS : EXIT_FAILURE)
-SWIFT
 }
 
 test -x "$app_path/Contents/MacOS/EverythingMac"
