@@ -148,11 +148,11 @@ final class SearchService: NSObject, EverythingMacServiceProtocol, @unchecked Se
         let callback = pending.removeValue(forKey: id)
         connectionLock.unlock()
         if let (once, reply) = callback {
-            if role == .cli && !automation.isEnabled {
+            if role == .app {
+                once.deliver(data, to: reply)
+            } else if !automation.deliverIfEnabled({ once.deliver(data, to: reply) }) {
                 Self.send(.failure("Command-line search access is disabled.", code: .permissionDenied),
                           once: once, to: reply)
-            } else {
-                once.deliver(data, to: reply)
             }
         }
     }

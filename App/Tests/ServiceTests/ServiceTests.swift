@@ -119,6 +119,10 @@ final class ServiceProtocolTests: XCTestCase {
             .appendingPathComponent("everythingmac-automation-test-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: directory) }
         let url = directory.appendingPathComponent("automation-access")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o755])
+        try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                              ofItemAtPath: directory.path)
         let access = AutomationAccess(url: url)
         XCTAssertFalse(access.isEnabled)
         let revoked = expectation(description: "revoked")
@@ -128,6 +132,8 @@ final class ServiceProtocolTests: XCTestCase {
         XCTAssertTrue(AutomationAccess(url: url).isEnabled)
         let permissions = try FileManager.default.attributesOfItem(atPath: url.path)
         XCTAssertEqual((permissions[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        let directoryPermissions = try FileManager.default.attributesOfItem(atPath: directory.path)
+        XCTAssertEqual((directoryPermissions[.posixPermissions] as? NSNumber)?.intValue, 0o700)
         try access.setEnabled(false)
         wait(for: [revoked], timeout: 1)
         XCTAssertFalse(AutomationAccess(url: url).isEnabled)
@@ -188,6 +194,46 @@ final class ServiceProtocolTests: XCTestCase {
         XCTAssertEqual(probe.cancelCount, 1)
         probe.completeLate()
         XCTAssertEqual(probe.replies.count, 1)
+        cli.close()
+    }
+
+    func testDisableWaitsForAlreadyAuthorizedReplyPublication() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("everythingmac-auth-delivery-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let access = AutomationAccess(url: directory.appendingPathComponent("access"))
+        try access.setEnabled(true)
+        let admission = ConnectionAdmission(capacity: 1)
+        let probe = AutomationForwardProbe()
+        let cli = SearchService(lease: try XCTUnwrap(admission.acquire()), role: .cli,
+                                automation: access,
+                                testForward: { data, callback in probe.forward(data, callback: callback) })
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let delivered = DispatchSemaphore(value: 0)
+        let disableReturned = DispatchSemaphore(value: 0)
+        let request = try JSONEncoder().encode(ServiceRequest(operation: .status, payload: nil))
+        cli.perform(request) { data in
+            entered.signal()
+            release.wait()
+            probe.record(data)
+            delivered.signal()
+        }
+        DispatchQueue.global().async { probe.completeLate() }
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+        DispatchQueue.global().async {
+            try? access.setEnabled(false)
+            disableReturned.signal()
+        }
+        let deadline = Date().addingTimeInterval(2)
+        while access.isEnabled && Date() < deadline { Thread.sleep(forTimeInterval: 0.001) }
+        XCTAssertFalse(access.isEnabled)
+        XCTAssertEqual(disableReturned.wait(timeout: .now() + 0.05), .timedOut)
+        release.signal()
+        XCTAssertEqual(delivered.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(disableReturned.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(probe.replies.count, 1)
+        XCTAssertNil(probe.replies.first?.errorCode)
         cli.close()
     }
 

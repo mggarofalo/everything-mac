@@ -93,8 +93,13 @@ expect_reject "$search_service" tampered
 expect_reject "$index_service" cli
 expect_accept "$index_service" search-service
 
-if security find-identity -v -p codesigning | grep -q '"SpeakType Local Dev"'; then
-  sign_client signer-no-team com.everythingmac.cli 'SpeakType Local Dev'
+if [[ -n "${NO_TEAM_SIGN_IDENTITY:-}" ]]; then
+  sign_client signer-no-team com.everythingmac.cli "$NO_TEAM_SIGN_IDENTITY"
+  signer_team="$(codesign -dv --verbose=4 "$scratch/signer-no-team" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
+  if [[ "$signer_team" != 'not set' && -n "$signer_team" ]]; then
+    echo "NO_TEAM_SIGN_IDENTITY must have no team identifier." >&2
+    exit 2
+  fi
   expect_reject "$search_service" signer-no-team
 fi
 
