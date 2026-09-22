@@ -22,9 +22,9 @@ final class XPCSearchTransport: NSObject, CLISearchTransport, @unchecked Sendabl
 
     deinit { connection.invalidate() }
 
-    func search(_ request: SearchRequest, deadline: Date) async throws -> SearchResponse {
+    func search(_ request: SearchRequest, requestID: UUID, deadline: Date) async throws -> SearchResponse {
         let payload = try JSONEncoder().encode(request)
-        let envelope = try JSONEncoder().encode(ServiceRequest(operation: .search, payload: payload, requestID: UUID()))
+        let envelope = try JSONEncoder().encode(ServiceRequest(operation: .search, payload: payload, requestID: requestID))
         let reply: Data = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
             let proxy = connection.remoteObjectProxyWithErrorHandler { error in continuation.resume(throwing: error) }
             guard let service = proxy as? EverythingMacServiceProtocol else {

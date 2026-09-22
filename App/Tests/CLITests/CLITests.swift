@@ -78,7 +78,7 @@ private final class MockTransport: CLISearchTransport, @unchecked Sendable {
         self.error = error
     }
 
-    func search(_ request: SearchRequest, deadline: Date) async throws -> SearchResponse {
+    func search(_ request: SearchRequest, requestID: UUID, deadline: Date) async throws -> SearchResponse {
         searches += 1
         if let error { throw error }
         return response
@@ -90,7 +90,7 @@ private final class MockTransport: CLISearchTransport, @unchecked Sendable {
 private final class SlowTransport: CLISearchTransport, @unchecked Sendable {
     private(set) var cancellations = 0
 
-    func search(_ request: SearchRequest, deadline: Date) async throws -> SearchResponse {
+    func search(_ request: SearchRequest, requestID: UUID, deadline: Date) async throws -> SearchResponse {
         try await Task.sleep(for: .seconds(60))
         return SearchResponse(records: [])
     }

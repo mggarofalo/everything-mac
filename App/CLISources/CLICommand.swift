@@ -124,7 +124,7 @@ enum CLIError: Error, Equatable {
 }
 
 protocol CLISearchTransport: Sendable {
-    func search(_ request: SearchRequest, deadline: Date) async throws -> SearchResponse
+    func search(_ request: SearchRequest, requestID: UUID, deadline: Date) async throws -> SearchResponse
     func cancel(_ requestID: UUID) async
 }
 
@@ -171,7 +171,7 @@ struct CLIRunner {
         let deadline = now().addingTimeInterval(timeout)
         do {
             return try await withThrowingTaskGroup(of: SearchResponse.self) { group in
-                group.addTask { try await transport.search(request, deadline: deadline) }
+                group.addTask { try await transport.search(request, requestID: requestID, deadline: deadline) }
                 group.addTask {
                     try await Task.sleep(for: .seconds(timeout))
                     throw CLIError.timeout
