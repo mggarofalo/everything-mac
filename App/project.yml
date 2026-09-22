@@ -59,6 +59,9 @@ targets:
     platform: macOS
     sources:
       - Shared/ServiceProtocol.swift
+      - Shared/AutomationAccess.swift
+      - Shared/ConnectionTrust.swift
+      - ServiceSources/Search/SearchService.swift
       - Sources/IndexActor.swift
       - Tests/ServiceTests
     dependencies:

@@ -37,6 +37,15 @@ actor SearchClient {
 
     func currentStatus() async -> ServiceStatus? { try? await status() }
 
+    func automationAccessEnabled() async throws -> Bool {
+        try await call(.getAutomationAccess, payload: Optional<Bool>.none, as: Bool.self)
+    }
+
+    func setAutomationAccess(_ enabled: Bool) async throws {
+        let saved: Bool = try await call(.setAutomationAccess, payload: enabled, as: Bool.self)
+        guard saved else { throw ServiceErrorCode.internalError }
+    }
+
     func resetConnection() {
         let oldConnection = connection
         connection = nil
