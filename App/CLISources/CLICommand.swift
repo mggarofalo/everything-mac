@@ -85,7 +85,7 @@ struct CLIOptions: Equatable {
             case "--timeout":
                 guard let value = TimeInterval(arguments[valueIndex]), value.isFinite,
                       value > 0, value <= 3_600 else {
-                    throw CLIError.invalidArguments("`--timeout` must be finite seconds from 0 to 3600.")
+                    throw CLIError.invalidArguments("`--timeout` must be finite, positive, and at most 3600 seconds.")
                 }
                 timeout = value
             default: throw CLIError.invalidArguments("Unknown option `\(argument)`.")

@@ -20,6 +20,10 @@ cli="$app/Contents/MacOS/everythingmac"
   echo "The app must contain distinct executable GUI and CLI files." >&2
   exit 1
 }
+[[ ! "$gui" -ef "$cli" ]] || {
+  echo "GUI and CLI resolve to the same executable." >&2
+  exit 1
+}
 gui_inode="$(stat -f '%d:%i' "$gui")"
 cli_inode="$(stat -f '%d:%i' "$cli")"
 [[ "$gui_inode" != "$cli_inode" ]] || {
