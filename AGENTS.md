@@ -7,7 +7,8 @@ EverythingMac is a native macOS filename-search application written in Swift 6. 
 - `Package.swift` defines the reusable `IndexCore` package.
 - `Sources/IndexCore/` contains scanning, storage, parsing, search, sorting, cache, and FSEvents logic.
 - `Tests/IndexCoreTests/` contains the core behavior and regression tests.
-- `App/project.yml` is the source of truth for the Xcode project and all 3 executable targets.
+- `App/project.yml` is the source of truth for the Xcode project and all 4 executable targets.
+- `App/CLISources/` contains the read-only command-line client.
 - `App/Sources/` contains the SwiftUI and AppKit interface.
 - `App/ServiceSources/Indexing/` contains the persistent indexing service entry point.
 - `App/ServiceSources/Search/` contains the UI-facing search service entry point.

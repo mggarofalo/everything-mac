@@ -37,39 +37,29 @@ APP="$(xcodebuild -project EverythingMac.xcodeproj -scheme EverythingMac \
         -configuration Release -showBuildSettings 2>/dev/null \
         | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2; exit}')/EverythingMac.app"
 
-codesign --verify --deep --strict --verbose=2 "$APP"
-SIGNATURE="$(codesign -dvv --entitlements - "$APP" 2>&1)"
-if ! grep -q 'flags=.*runtime' <<<"$SIGNATURE"; then
-  echo "Refusing to install a build without hardened runtime." >&2
-  exit 1
-fi
-if grep -q 'com.apple.security.get-task-allow' <<<"$SIGNATURE"; then
-  echo "Refusing to install a build with get-task-allow." >&2
-  exit 1
-fi
-for service_spec in \
-  "Contents/MacOS/EverythingMacIndexingService:com.everythingmac.app" \
-  "Contents/MacOS/EverythingMacSearchService:EverythingMacSearchService"; do
-  service_path="${service_spec%%:*}"
-  expected_identifier="${service_spec#*:}"
-  service_name="${service_path##*/}"
-  service_signature="$(codesign -dvv "$APP/$service_path" 2>&1)"
-  grep -q "Identifier=${expected_identifier}" <<<"$service_signature" || {
-    echo "Refusing to install $service_name with an unexpected signing identifier." >&2
-    exit 1
-  }
-  grep -q 'flags=.*runtime' <<<"$service_signature" || {
-    echo "Refusing to install $service_name without hardened runtime." >&2
-    exit 1
-  }
+# Sign every nested executable before resealing the app. The CLI has a distinct
+# identity and never inherits the app/indexer's Full Disk Access identifier.
+for executable_spec in \
+  "EverythingMacIndexingService:com.everythingmac.app" \
+  "EverythingMacSearchService:EverythingMacSearchService" \
+  "everythingmac:com.everythingmac.cli"; do
+  executable_name="${executable_spec%%:*}"
+  executable_identifier="${executable_spec#*:}"
+  codesign --force --options runtime --timestamp=none \
+    --identifier "$executable_identifier" --sign "$SIGN_IDENTITY" \
+    "$APP/Contents/MacOS/$executable_name"
 done
+codesign --force --options runtime --timestamp=none \
+  --entitlements EverythingMac.entitlements --identifier com.everythingmac.app \
+  --sign "$SIGN_IDENTITY" "$APP"
+bash ../scripts/verify-app-signatures.sh "$APP"
 
 # Deploy as a complete bundle so files removed by a newer build cannot survive a
 # merge-copy. Stage and verify first, then replace the destination as one rename.
 INSTALL_STAGE="$(mktemp -d /Applications/.EverythingMac-install.XXXXXX)"
 trap 'rm -rf "$INSTALL_STAGE"' EXIT
 ditto "$APP" "$INSTALL_STAGE/EverythingMac.app"
-codesign --verify --deep --strict --verbose=2 "$INSTALL_STAGE/EverythingMac.app"
+bash ../scripts/verify-app-signatures.sh "$INSTALL_STAGE/EverythingMac.app"
 if [[ -e "/Applications/EverythingMac.app" ]]; then
   mv "/Applications/EverythingMac.app" "$INSTALL_STAGE/Previous.app"
 fi
@@ -77,7 +67,7 @@ if ! mv "$INSTALL_STAGE/EverythingMac.app" "/Applications/EverythingMac.app"; th
   [[ ! -e "$INSTALL_STAGE/Previous.app" ]] || mv "$INSTALL_STAGE/Previous.app" "/Applications/EverythingMac.app"
   exit 1
 fi
-if ! codesign --verify --deep --strict --verbose=2 "/Applications/EverythingMac.app"; then
+if ! bash ../scripts/verify-app-signatures.sh "/Applications/EverythingMac.app"; then
   mv "/Applications/EverythingMac.app" "$INSTALL_STAGE/Failed.app" 2>/dev/null || true
   [[ ! -e "$INSTALL_STAGE/Previous.app" ]] || mv "$INSTALL_STAGE/Previous.app" "/Applications/EverythingMac.app"
   echo "Installed bundle failed verification; restored the previous app." >&2

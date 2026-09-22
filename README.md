@@ -83,8 +83,18 @@ You can also choose to show an EverythingMac menu-bar entry. The menu opens sear
 or explicitly quits the UI app. Both optional access points remain available after closing the
 last window. Quitting removes them while the indexing and search background services continue.
 
-Shortcuts also provides a **Search EverythingMac** action with a query field. It opens the app
-and runs that query in the normal search interface.
+To use Shortcuts, create a shortcut, search the action library for **Search EverythingMac**,
+and add that action. Set its **Query** to a search such as `filetype:pdf annual`, or choose
+**Ask Each Time** for a reusable search shortcut. Running it opens EverythingMac and selects
+the supplied query in its search field. Results appear in EverythingMac.
+
+On macOS 26 or later, Spotlight can also offer **Search EverythingMac** as an action.
+Open Spotlight with Command-Space, press Command-3 to narrow to actions, and search for
+**Search EverythingMac**. Select the result labeled **EverythingMac**, fill in its query,
+and run it. This invokes the app; it does not add the private index to Spotlight's file results.
+The action has been observed in Spotlight on macOS 27; Shortcuts execution has been verified
+there. macOS 14 supports the Shortcuts entry point, but its interactive execution has not yet
+been verified in the compatibility runner.
 
 Automation can open a search with the canonical URL form:
 
@@ -99,12 +109,32 @@ so avoid placing sensitive query text directly in a shell command.
 
 ## Command-line search
 
-EverythingMac includes `everythingmac` at
-`/Applications/EverythingMac.app/Contents/MacOS/everythingmac`. The signed
-client requires **Settings → General → Allow command-line searches**,
-which is off by default. Disabling it cancels active command-line searches but
-cannot recall output already received. Any local process invoking the signed
-tool as your user can receive results while access is enabled.
+The bundled tool is available at `/Applications/EverythingMac.app/Contents/MacOS/everythingmac`.
+Open the app once to finish setup, then enable **Settings > General > Allow command-line
+searches**. The tool can query the existing index after the UI quits; it does not start the
+GUI, register services, or request Full Disk Access. `--help` and `--version` work offline.
+
+```bash
+'/Applications/EverythingMac.app/Contents/MacOS/everythingmac' search --format json -- 'filetype:pdf annual'
+```
+
+For an optional user-owned command on your PATH, create a symlink only if the destination
+is unused. These commands do not edit shell startup files:
+
+```bash
+mkdir -p "$HOME/.local/bin"
+if [ ! -e "$HOME/.local/bin/everythingmac" ] && [ ! -L "$HOME/.local/bin/everythingmac" ]; then
+  ln -s '/Applications/EverythingMac.app/Contents/MacOS/everythingmac' "$HOME/.local/bin/everythingmac"
+fi
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+An in-place app upgrade replaces the bundled executable while keeping this symlink usable.
+The installer does not create links or replace commands elsewhere on your PATH.
+
+Command-line access is off by default. Disabling it cancels active command-line searches but
+cannot recall output already received. Any local process invoking the signed tool as your
+user can receive results while access is enabled.
 
 The v1 interface is `everythingmac search [options] -- <query>`, with `--help` and
 `--version`. Search accepts exactly one query argument and passes its syntax
@@ -146,6 +176,19 @@ and 130 for SIGINT or SIGTERM. Failure produces no partial success document.
 A closed output pipe during a successful result stream exits cleanly with status
 0; errors retain their exit status even if stderr is closed.
 
+For a filename-safe pipeline in Bash or Zsh, keep NUL delimiters through each read:
+
+```bash
+everythingmac search --null --limit 100 -- 'filetype:pdf' |
+  while IFS= read -r -d '' path; do
+    /usr/bin/stat -f '%N: %z bytes' "$path"
+  done
+```
+
+Quote the whole query to preserve Boolean operators, spaces, and regular expressions:
+`everythingmac search -- '(filetype:pdf OR filetype:md) annual'` or
+`everythingmac search -- 'regex:^report.*[.]pdf$'`. Put queries beginning with `-` after `--`.
+
 Searches are admitted to the one shared index actor, with at most 32 client
 connections per service, 32 requests in flight across clients, at most two
 background searches, and eight per connection. Background searches use
@@ -159,6 +202,9 @@ cancellation and connection loss affect only requests owned by that connection.
 ## Remove EverythingMac
 
 Move `EverythingMac.app` out of Applications or into the Trash. Its removal observer stops and unregisters the indexing and search services. It also deletes the generated index.
+
+If you created the optional `~/.local/bin/everythingmac` symlink, remove that link yourself
+after checking that it still points to this app. The app does not delete user-created links.
 
 ## Build from source
 
@@ -240,12 +286,13 @@ Publish the DMG and checksum on the GitHub Release whose tag matches the applica
 
 ## Understand the components
 
-EverythingMac has 3 executable components:
+EverythingMac has 4 executable components:
 
 | Component | Role |
 | --- | --- |
 | `EverythingMac.app` | Displays the interface and performs user-requested file actions |
-| `EverythingMacSearchService` | Provides the UI-facing XPC endpoint |
+| `everythingmac` | Sends bounded, read-only command-line queries to the search service |
+| `EverythingMacSearchService` | Authenticates app/CLI clients and forwards permitted XPC requests |
 | `EverythingMacIndexingService` | Scans metadata, owns the index, processes queries, and watches filesystem changes |
 
 The `IndexCore` Swift package contains the storage, parser, search, sorting, scanning, and FSEvents code shared by the executables.

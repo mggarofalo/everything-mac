@@ -27,10 +27,10 @@ struct CLIOptions: Equatable {
       --version            Show the version
 
     Examples:
-      everythingmac search -- 'kind:pdf "annual report"'
-      everythingmac search --match-path -- 'path:~/Documents'
+      everythingmac search -- 'filetype:pdf "annual report"'
+      everythingmac search --match-path -- 'Documents report'
       everythingmac search --format json -- 'rx:^report[0-9]+$'
-      everythingmac search --null -- 'kind:image' | xargs -0 -n1 printf '%s\\n'
+      everythingmac search --null -- 'filetype:png,jpg' | xargs -0 -n1 printf '%s\\n'
     """
 
     static func parse(arguments: [String]) throws -> CLIOptions? {

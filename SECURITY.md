@@ -82,8 +82,8 @@ CLI request. Disabling access closes active CLI forwarding connections, cancelin
 their indexer work; output already delivered cannot be recalled. Enabling it
 allows any local process running the signed CLI as your user to receive search
 results. The signature authenticates the executable, not its parent script or
-invoking process. The CLI is included in current source builds and is planned
-for the next release.
+invoking process. The bundled CLI has its own `com.everythingmac.cli` signing identifier;
+the build scripts verify its signature and team separately from the GUI and both services.
 The preference file and index cache are protected from other user accounts,
 not from software already running as the same user: such software can edit the
 preference or read the cache directly. The opt-in controls the supported XPC
