@@ -18,9 +18,23 @@ enum EverythingMacCLI {
         let result = await task.value
         interruption.cancel()
         termination.cancel()
-        FileHandle.standardOutput.write(result.stdout)
-        FileHandle.standardError.write(result.stderr)
-        exit(result.exitCode)
+        let outputStatus = write(result.stdout, to: STDOUT_FILENO)
+        let errorStatus = write(result.stderr, to: STDERR_FILENO)
+        exit(outputStatus == 0 && errorStatus == 0 ? result.exitCode : 5)
+    }
+
+    private static func write(_ data: Data, to descriptor: Int32) -> Int32 {
+        data.withUnsafeBytes { bytes in
+            var offset = 0
+            while offset < bytes.count {
+                let count = Darwin.write(descriptor, bytes.baseAddress!.advanced(by: offset), bytes.count - offset)
+                if count > 0 { offset += count; continue }
+                if errno == EINTR { continue }
+                if errno == EPIPE { return 0 }
+                return 5
+            }
+            return 0
+        }
     }
 }
 
@@ -39,15 +53,29 @@ final class XPCSearchTransport: NSObject, CLISearchTransport, @unchecked Sendabl
     func search(_ request: SearchRequest, requestID: UUID, deadline: Date) async throws -> SearchResponse {
         let payload = try JSONEncoder().encode(request)
         let envelope = try JSONEncoder().encode(ServiceRequest(operation: .search, payload: payload, requestID: requestID))
-        let reply: Data = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-            let proxy = connection.remoteObjectProxyWithErrorHandler { error in continuation.resume(throwing: error) }
+        let reply = CLIReplyContinuation()
+        let data: Data
+        do {
+            data = try await withTaskCancellationHandler(operation: {
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
+                reply.install(continuation)
+                let proxy = connection.remoteObjectProxyWithErrorHandler { error in reply.complete(.failure(error)) }
             guard let service = proxy as? EverythingMacServiceProtocol else {
-                continuation.resume(throwing: CLIError.unavailable("Search service is unavailable; open EverythingMac to complete setup."))
+                reply.complete(.failure(CLIError.unavailable("Search service is unavailable; open EverythingMac to complete setup.")))
                 return
             }
-            service.perform(envelope) { data in continuation.resume(returning: data) }
+                service.perform(envelope) { data in reply.complete(.success(data)) }
+            }
+            }, onCancel: {
+            reply.complete(.failure(CancellationError()))
+            Task { await self.cancel(requestID) }
+            })
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            throw CLIError.unavailable("Search service is unavailable; open EverythingMac to complete setup.")
         }
-        let decoded = try JSONDecoder().decode(ServiceReply.self, from: reply)
+        let decoded = try JSONDecoder().decode(ServiceReply.self, from: data)
         if let error = decoded.error {
             if decoded.errorCode == ServiceErrorCode.permissionDenied || decoded.errorCode == ServiceErrorCode.indexNotReady ||
                 decoded.errorCode == ServiceErrorCode.serviceUnavailable || decoded.errorCode == ServiceErrorCode.overloaded {
@@ -64,5 +92,32 @@ final class XPCSearchTransport: NSObject, CLISearchTransport, @unchecked Sendabl
         guard let payload = try? JSONEncoder().encode(ServiceRequest(operation: .cancelSearch, payload: nil, requestID: requestID)),
               let service = connection.remoteObjectProxy as? EverythingMacServiceProtocol else { return }
         service.perform(payload) { _ in }
+    }
+}
+
+private final class CLIReplyContinuation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Data, Error>?
+    private var result: Result<Data, Error>?
+
+    func install(_ continuation: CheckedContinuation<Data, Error>) {
+        lock.lock()
+        if let result {
+            lock.unlock()
+            continuation.resume(with: result)
+            return
+        }
+        self.continuation = continuation
+        lock.unlock()
+    }
+
+    func complete(_ result: Result<Data, Error>) {
+        lock.lock()
+        guard self.result == nil else { lock.unlock(); return }
+        self.result = result
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(with: result)
     }
 }

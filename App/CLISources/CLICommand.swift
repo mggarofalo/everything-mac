@@ -35,7 +35,7 @@ struct CLIOptions: Equatable {
 
     static func parse(arguments: [String]) throws -> CLIOptions? {
         guard !arguments.isEmpty else { throw CLIError.invalidArguments("Expected a command.") }
-        if arguments == ["--help"] || arguments == ["help"] { return nil }
+        if arguments == ["--help"] || arguments == ["help"] || arguments == ["search", "--help"] { return nil }
         if arguments == ["--version"] { return nil }
         guard arguments.first == "search" else { throw CLIError.invalidArguments("Expected `search`.") }
         var values = Values()
@@ -147,7 +147,7 @@ struct CLIRunner {
 
     func run(arguments: [String]) async -> CLIResult {
         do {
-            if arguments == ["--help"] || arguments == ["help"] {
+            if arguments == ["--help"] || arguments == ["help"] || arguments == ["search", "--help"] {
                 return success(stdout: Data((CLIOptions.help + "\n").utf8))
             }
             if arguments == ["--version"] {
