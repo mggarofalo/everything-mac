@@ -80,7 +80,11 @@ public extension QueryEngine {
     ) -> (UInt32, UInt32) -> Bool {
         switch key {
         case .name:
-            return { store.nameSortsBefore($0, $1) }
+            return {
+                if store.nameSortsBefore($0, $1) { return true }
+                if store.nameSortsBefore($1, $0) { return false }
+                return store.path(of: $0).utf8.lexicographicallyPrecedes(store.path(of: $1).utf8)
+            }
         case .path:
             return {
                 store.path(of: $0).localizedStandardCompare(store.path(of: $1)) == .orderedAscending
