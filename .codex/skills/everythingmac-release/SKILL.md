@@ -6,8 +6,9 @@ description: Release EverythingMac by updating its version, validating it, publi
 # Release EverythingMac
 
 Treat a public release and a local installation as separate artifacts: public
-DMGs require Developer ID signing and notarization, while `build-dev.sh` uses a
-stable Apple Development identity for local testing.
+DMGs require Developer ID signing and notarization, while `build-dev.sh` uses
+Developer ID signing by default for local testing. Development signing requires
+an explicit `LOCAL_SIGN_IDENTITY` override.
 
 ## Prepare
 

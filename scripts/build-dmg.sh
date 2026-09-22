@@ -6,9 +6,9 @@ usage() {
   cat <<'EOF'
 Usage: ./scripts/build-dmg.sh [--preview | --release]
 
-  --preview  Sign with an Apple Development identity and skip notarization.
-             The app and its services work locally, but Gatekeeper will not
-             trust this artifact on another Mac.
+  --preview  Sign with Developer ID by default and skip notarization.
+             Set LOCAL_SIGN_IDENTITY to explicitly use development signing.
+             This artifact is for local packaging tests, not distribution.
 
   --release  Sign with Developer ID, notarize, staple, and assess the DMG.
              This is the default and requires DEVELOPER_TEAM_ID plus a
@@ -36,13 +36,8 @@ search_service="$app/Contents/MacOS/EverythingMacSearchService"
 cli="$app/Contents/MacOS/everythingmac"
 
 if [[ "$mode" == "preview" ]]; then
-  sign_identity="${LOCAL_SIGN_IDENTITY:-$(security find-identity -v -p codesigning \
-    | sed -n 's/.*"\(Apple Development:[^"]*\)"/\1/p' | head -n 1)}"
-  [[ -n "$sign_identity" ]] || {
-    echo "No Apple Development signing identity found." >&2
-    echo "Set LOCAL_SIGN_IDENTITY or create a development certificate in Xcode." >&2
-    exit 1
-  }
+  source "$repo_dir/scripts/local-signing.sh"
+  sign_identity="$(local_signing_identity)"
   artifact_suffix="-preview"
   timestamp_option=(--timestamp=none)
 else

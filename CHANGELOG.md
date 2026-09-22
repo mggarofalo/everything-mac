@@ -22,6 +22,8 @@
   Search service replies now distinguish invalid queries, permission denial,
   cancellation, and an index with no published snapshot, and report the
   effective limit, exact truncation, and scan state for successful searches.
+- Use Developer ID signing by default for local installs and preview DMGs;
+  require an explicit override for development signing.
 
 ## 0.9.7
 
