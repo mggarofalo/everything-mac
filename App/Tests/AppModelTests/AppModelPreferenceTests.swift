@@ -3,23 +3,9 @@ import IndexCore
 
 @MainActor
 final class AppModelPreferenceTests: XCTestCase {
-    private var defaults: UserDefaults!
-    private var suiteName: String!
-
-    override func setUp() {
-        super.setUp()
-        suiteName = "AppModelPreferenceTests.\(UUID().uuidString)"
-        defaults = UserDefaults(suiteName: suiteName)!
-    }
-
-    override func tearDown() {
-        defaults.removePersistentDomain(forName: suiteName)
-        defaults = nil
-        suiteName = nil
-        super.tearDown()
-    }
-
     func testPresentedQueryDefaultsSurviveBootstrapWithoutChangingPreferences() {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set(true, forKey: "pref.matchPath")
         defaults.set(true, forKey: "pref.caseSensitive")
         defaults.set(true, forKey: "pref.wholeWord")
@@ -47,6 +33,8 @@ final class AppModelPreferenceTests: XCTestCase {
     }
 
     func testTypingAfterPresentedQueryDoesNotPersistTransientDefaults() {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set(true, forKey: "pref.matchPath")
         defaults.set(900, forKey: "pref.resultLimit")
         let model = AppModel(defaults: defaults)
@@ -60,6 +48,8 @@ final class AppModelPreferenceTests: XCTestCase {
     }
 
     func testUserOptionEditPersistsOnlyItsOwnSettingAfterPresentedQuery() {
+        let (defaults, suiteName) = makeDefaults()
+        defer { defaults.removePersistentDomain(forName: suiteName) }
         defaults.set(true, forKey: "pref.matchPath")
         defaults.set(true, forKey: "pref.caseSensitive")
         let model = AppModel(defaults: defaults)
@@ -70,5 +60,10 @@ final class AppModelPreferenceTests: XCTestCase {
         XCTAssertTrue(defaults.bool(forKey: "pref.matchPath"))
         XCTAssertTrue(defaults.bool(forKey: "pref.caseSensitive"))
         XCTAssertTrue(defaults.bool(forKey: "pref.wholeWord"))
+    }
+
+    private func makeDefaults() -> (UserDefaults, String) {
+        let suiteName = "AppModelPreferenceTests.\(UUID().uuidString)"
+        return (UserDefaults(suiteName: suiteName)!, suiteName)
     }
 }
