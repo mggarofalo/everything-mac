@@ -95,13 +95,13 @@ final class SearchPresentationHost: ObservableObject {
             try runQuery(SearchURLParser.query(from: url))
         } catch let error as SearchURLParseError {
             urlErrorMessage = error.errorDescription
-            coordinator?.showCurrentSearch()
+            coordinator?.showCurrentSearchPreservingPendingRequest()
         } catch let error as SearchPresentationError {
             urlErrorMessage = error.errorDescription
-            coordinator?.showCurrentSearch()
+            coordinator?.showCurrentSearchPreservingPendingRequest()
         } catch {
             urlErrorMessage = SearchURLParseError.invalidURL.errorDescription
-            coordinator?.showCurrentSearch()
+            coordinator?.showCurrentSearchPreservingPendingRequest()
         }
     }
 

@@ -64,6 +64,25 @@ final class SearchAdaptersTests: XCTestCase {
         XCTAssertNotNil(host.urlErrorMessage)
     }
 
+    func testInvalidURLPreservesInstalledCoordinatorRequestUntilWindowIsReady() throws {
+        _ = NSApplication.shared
+        var delivered: [SearchPresentationRequest] = []
+        let coordinator = SearchPresentationCoordinator { request, _ in
+            delivered.append(request)
+        }
+        let host = SearchPresentationHost()
+        host.install(coordinator)
+        try host.runQuery("valid query")
+
+        host.handle(url: try url("everythingmac://search?q="))
+        coordinator.installSceneOpener {}
+        let window = NSWindow()
+        coordinator.registerSearchWindow(window)
+
+        XCTAssertEqual(delivered, [.runQuery("valid query")])
+        XCTAssertNotNil(host.urlErrorMessage)
+    }
+
     private func url(_ string: String) throws -> URL {
         try XCTUnwrap(URL(string: string))
     }
