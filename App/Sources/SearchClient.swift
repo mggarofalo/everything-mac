@@ -3,6 +3,7 @@ import IndexCore
 
 actor SearchClient {
     private var connection: NSXPCConnection?
+    private var connectionRevision: UInt64 = 0
     private var onLiveChange: (@Sendable () -> Void)?
     private var onProgress: (@Sendable (Int) -> Void)?
     private nonisolated(unsafe) var notificationToken: NSObjectProtocol?
@@ -47,6 +48,7 @@ actor SearchClient {
     }
 
     func resetConnection() {
+        connectionRevision &+= 1
         let oldConnection = connection
         connection = nil
         oldConnection?.invalidate()
@@ -114,6 +116,9 @@ actor SearchClient {
         // Connect only when the first request is made so a brand-new installation
         // cannot permanently capture an unavailable service before registration.
         let connection = activeConnection()
+        // Keep the XPC object inside the request setup; this value identifies
+        // its lifetime after the continuation suspends the actor.
+        let requestConnectionRevision = connectionRevision
         let replyData: Data
         do {
             replyData = try await withCheckedThrowingContinuation { continuation in
@@ -143,7 +148,7 @@ actor SearchClient {
                 service.perform(request) { waiter.finish(.success($0)) }
             }
         } catch {
-            if operation != .ping && self.connection === connection {
+            if operation != .ping && connectionRevision == requestConnectionRevision {
                 resetConnection()
             }
             throw error
@@ -151,7 +156,7 @@ actor SearchClient {
         let envelope = try JSONDecoder().decode(ServiceReply.self, from: replyData)
         if let error = envelope.error {
             if envelope.errorCode == .serviceUnavailable,
-               operation != .ping, self.connection === connection {
+               operation != .ping, connectionRevision == requestConnectionRevision {
                 resetConnection()
             }
             throw NSError(domain: "EverythingMac", code: 3,
@@ -169,6 +174,7 @@ actor SearchClient {
         let newConnection = NSXPCConnection(machServiceName: searchMachServiceName, options: [])
         newConnection.remoteObjectInterface = NSXPCInterface(with: EverythingMacServiceProtocol.self)
         newConnection.resume()
+        connectionRevision &+= 1
         connection = newConnection
         return newConnection
     }
