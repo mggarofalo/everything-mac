@@ -6,11 +6,13 @@ struct EverythingMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @StateObject private var model: AppModel
     @StateObject private var presentation: SearchPresentationCoordinator
+    @StateObject private var shortcut: GlobalShortcutController
+    @StateObject private var menuBar: MenuBarPreference
 
     init() {
         let appModel = AppModel()
         _model = StateObject(wrappedValue: appModel)
-        _presentation = StateObject(wrappedValue: SearchPresentationCoordinator { [weak appModel] request, window in
+        let coordinator = SearchPresentationCoordinator { [weak appModel] request, window in
             guard let appModel else { return }
             switch request {
             case .showCurrentSearch:
@@ -19,7 +21,12 @@ struct EverythingMacApp: App {
                 appModel.runPresentedQuery(query)
                 appModel.focusSearch(in: window)
             }
+        }
+        _presentation = StateObject(wrappedValue: coordinator)
+        _shortcut = StateObject(wrappedValue: GlobalShortcutController {
+            coordinator.showCurrentSearch()
         })
+        _menuBar = StateObject(wrappedValue: MenuBarPreference())
     }
 
     var body: some Scene {
@@ -29,14 +36,24 @@ struct EverythingMacApp: App {
                 .environmentObject(presentation)
                 .background(SearchPresentationSceneHost())
                 .frame(minWidth: 800, minHeight: 500)
+                .onAppear {
+                    shortcut.start()
+                    appDelegate.onTerminate = { shortcut.stop() }
+                }
         }
         .commands { AppCommands(model: model) }
         Settings {
-            SettingsView()
+            SettingsView(showInMenuBar: $menuBar.isVisible)
                 .environmentObject(model)
                 .environmentObject(presentation)
+                .environmentObject(shortcut)
                 .background(SearchPresentationSceneHost())
         }
+        MenuBarExtra("EverythingMac", systemImage: "magnifyingglass", isInserted: $menuBar.isVisible) {
+            EverythingMacMenuBarExtra()
+                .environmentObject(presentation)
+        }
+        .menuBarExtraStyle(.menu)
     }
 }
 
@@ -56,7 +73,13 @@ private struct SearchPresentationSceneHost: View {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    var onTerminate: (() -> Void)?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         BackgroundServices.install()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        onTerminate?()
     }
 }

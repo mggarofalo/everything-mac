@@ -53,6 +53,19 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.service-tests
         GENERATE_INFOPLIST_FILE: YES
+  EverythingMacShortcutTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Sources/GlobalShortcut.swift
+      - Sources/CarbonGlobalShortcutRegistrar.swift
+      - Sources/GlobalShortcutRecorder.swift
+      - Sources/MenuBarPreference.swift
+      - Tests/GlobalShortcutTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.shortcut-tests
+        GENERATE_INFOPLIST_FILE: YES
   EverythingMacIndexingService:
     type: tool
     platform: macOS
