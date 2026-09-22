@@ -6,6 +6,9 @@ on:
     paths:
       - .github/workflows/macos14-compatibility.yml
       - scripts/check-macos14-compatibility.sh
+      - App/project.yml
+      - App/Info.plist
+      - App/Sources/**
 
 permissions:
   contents: read

@@ -20,6 +20,21 @@ cleanup() {
 }
 trap cleanup EXIT
 
+has_on_screen_window() {
+  /usr/bin/swift - "$app_pid" <<'SWIFT'
+import CoreGraphics
+import Foundation
+
+let processID = Int(CommandLine.arguments[1])!
+let windows = CGWindowListCopyWindowInfo(.optionOnScreenOnly, kCGNullWindowID) as? [[String: Any]] ?? []
+let hasWindow = windows.contains { window in
+    (window[kCGWindowOwnerPID as String] as? Int) == processID
+        && (window[kCGWindowLayer as String] as? Int) == 0
+}
+exit(hasWindow ? EXIT_SUCCESS : EXIT_FAILURE)
+SWIFT
+}
+
 test -x "$app_path/Contents/MacOS/EverythingMac"
 test -f "$metadata_path"
 test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$info_plist")" = "everythingmac"
@@ -27,7 +42,15 @@ grep -aq "SearchEverythingMacIntent" "$metadata_path"
 grep -aq "EverythingMacShortcuts" "$metadata_path"
 grep -aq 'Search ${query}' "$metadata_path"
 
-open -n "$app_path"
+/usr/bin/osascript - "$app_path" <<'APPLESCRIPT'
+on run argv
+    tell application "Finder"
+        open POSIX file (item 1 of argv)
+        activate
+    end tell
+end run
+APPLESCRIPT
+
 for _ in {1..15}; do
   app_pid="$(pgrep -f "$app_path/Contents/MacOS/EverythingMac" | head -n 1 || true)"
   [[ -n "$app_pid" ]] && break
@@ -39,7 +62,11 @@ if [[ -z "$app_pid" ]]; then
   exit 1
 fi
 
-for _ in {1..3}; do
+for _ in {1..15}; do
   kill -0 "$app_pid"
+  has_on_screen_window && exit 0
   sleep 1
 done
+
+echo "EverythingMac did not create an on-screen window after Finder opened it on macOS 14." >&2
+exit 1
