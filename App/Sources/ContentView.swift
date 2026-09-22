@@ -54,9 +54,9 @@ struct ContentView: View {
                 Divider()
             }
             SearchField(text: $model.query,
-                        matchPath: Binding(get: { model.matchPath }, set: model.setMatchPath),
-                        caseSensitive: Binding(get: { model.caseSensitive }, set: model.setCaseSensitive),
-                        wholeWord: Binding(get: { model.wholeWord }, set: model.setWholeWord),
+                        matchPath: Binding(get: { model.matchPath }, set: { model.setMatchPath($0) }),
+                        caseSensitive: Binding(get: { model.caseSensitive }, set: { model.setCaseSensitive($0) }),
+                        wholeWord: Binding(get: { model.wholeWord }, set: { model.setWholeWord($0) }),
                         focused: $searchFocused,
                         focusSignal: model.focusSearchSignal,
                         isFocusTarget: model.focusSearchWindowNumber == searchWindowNumber,
