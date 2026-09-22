@@ -72,6 +72,14 @@ The search service accepts `com.everythingmac.app`. The indexer accepts
 application for Full Disk Access. Changes to these signing identifiers must
 update the trust policy and packaging checks together.
 
+## External search entry points
+
+The Shortcuts action and `everythingmac://search?q=` URL scheme accept untrusted query text and
+only route it into the normal search presentation. URLs require the `search` host, exactly one
+percent-encoded `q` parameter, and no other route components. They cannot open, reveal, export,
+or delete files. EverythingMac does not log URL query contents, but callers should account for
+their own browser or shell history when a query is sensitive.
+
 ## File actions require current identity
 
 EverythingMac asks for confirmation before moving a result to the Trash. It records the selected item’s device and inode, then checks them again after confirmation. If the path now refers to another item, the operation stops.

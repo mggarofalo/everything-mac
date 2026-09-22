@@ -72,6 +72,15 @@ final class SearchPresentationCoordinator: ObservableObject {
         enqueue(.showCurrentSearch)
     }
 
+    /// Presents an error without discarding a query already waiting for a scene or window.
+    func showCurrentSearchPreservingPendingRequest() {
+        guard queue.pending == nil else {
+            presentPendingRequest()
+            return
+        }
+        enqueue(.showCurrentSearch)
+    }
+
     func runQuery(_ query: String) throws {
         try Self.validate(query: query)
         enqueue(.runQuery(query))
