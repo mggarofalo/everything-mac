@@ -14,6 +14,14 @@ struct AppCommands: Commands {
                 set: { model.setSort($0, ascending: model.ascending) })
     }
     var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("About EverythingMac") {
+                NSApplication.shared.orderFrontStandardAboutPanel(options: [
+                    .applicationVersion: "Version \(BuildVersion.display)",
+                    .version: ""
+                ])
+            }
+        }
         // FILE — act on the selected result, plus index/export actions.
         CommandGroup(after: .newItem) {
             Divider()

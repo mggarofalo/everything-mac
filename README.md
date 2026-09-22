@@ -113,6 +113,9 @@ The bundled tool is available at `/Applications/EverythingMac.app/Contents/MacOS
 Open the app once to finish setup, then enable **Settings > General > Allow command-line
 searches**. The tool can query the existing index after the UI quits; it does not start the
 GUI, register services, or request Full Disk Access. `--help` and `--version` work offline.
+The About panel and `--version` show the semantic version and the eight-character
+Git commit used to build the app, with `-dirty` when the source worktree had
+local changes. Builds from source archives without Git history say `revision unknown`.
 
 ```bash
 '/Applications/EverythingMac.app/Contents/MacOS/everythingmac' search --format json -- 'filetype:pdf annual'
