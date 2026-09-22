@@ -67,6 +67,12 @@ echo "Every core source file meets the ${minimum_file_line_coverage}% line-cover
 echo "Running indexing-service boundary tests..."
 xcodegen generate --spec App/project.yml --project App
 xcodebuild -project App/EverythingMac.xcodeproj \
+  -scheme EverythingMacAdapterTests \
+  -configuration Debug \
+  CODE_SIGNING_ALLOWED=NO \
+  test
+
+xcodebuild -project App/EverythingMac.xcodeproj \
   -scheme EverythingMacAppModelTests \
   -configuration Debug \
   CODE_SIGNING_ALLOWED=NO \
