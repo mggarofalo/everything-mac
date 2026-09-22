@@ -45,7 +45,9 @@ struct EverythingMacApp: App {
                     appDelegate.onTerminate = { shortcut.stop() }
                 }
                 .onOpenURL { presentationHost.handle(url: $0) }
+                .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         }
+        .handlesExternalEvents(matching: ["*"])
         .commands { AppCommands(model: model) }
         Settings {
             SettingsView(showInMenuBar: menuBarVisibility)
