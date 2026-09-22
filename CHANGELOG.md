@@ -22,6 +22,7 @@
   Search service replies now distinguish invalid queries, permission denial,
   cancellation, and an index with no published snapshot, and report the
   effective limit, exact truncation, and scan state for successful searches.
+- Preview search results with Quick Look using Space, ⌘Y, or the shortcut menu.
 
 ## 0.9.7
 

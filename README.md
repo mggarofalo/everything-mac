@@ -32,6 +32,8 @@ Enter any part of a file or folder name. Use the sliders button beside the searc
 
 You can sort the result table by name, path, size, kind, or modification date. Double-click a result to open it. The shortcut menu can open it with another app, reveal it in Finder, copy its name or path, or move it to the Trash. Use `File > Export Results` to save the current rows as a tab-separated file.
 
+Select a result and press Space to toggle a native Quick Look preview, or use `File > Quick Look` (⌘Y) or the shortcut menu. While the preview is open, selecting another result updates it. Preview availability depends on the file type and macOS access permissions.
+
 ### Filter results
 
 Filters can appear anywhere in a query:

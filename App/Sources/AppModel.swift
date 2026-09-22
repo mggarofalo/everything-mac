@@ -29,6 +29,7 @@ final class AppModel: ObservableObject {
     @Published var rules: ExcludeRules = .defaults
     @Published var scanning = false
     @Published private(set) var hasFullDiskAccess = false
+    @Published var previewURL: URL?
     @Published var selectedPath: String?
     private(set) var selectedIdentity: ResultActions.ItemIdentity?
     // Bumped to ask the focused window to put the cursor in the search field (⌘F /
@@ -44,6 +45,12 @@ final class AppModel: ObservableObject {
     func select(_ record: FileRecord?) {
         selectedIdentity = record.flatMap { ResultActions.identity(for: $0) }
         selectedPath = record?.path
+        if previewURL != nil { previewURL = record.map { URL(fileURLWithPath: $0.path) } }
+    }
+
+    func togglePreview(_ record: FileRecord) {
+        let url = URL(fileURLWithPath: record.path)
+        previewURL = previewURL == url ? nil : url
     }
 
     let index: SearchClient

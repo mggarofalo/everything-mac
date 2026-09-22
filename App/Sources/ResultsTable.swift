@@ -7,12 +7,18 @@ struct ResultsTable: NSViewRepresentable {
     var rows: [FileRecord]
     var onSort: (QueryEngine.SortKey, Bool) -> Void
     var onSelect: (FileRecord?) -> Void
+    var onPreview: (FileRecord) -> Void
     var onActivate: (FileRecord) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
     func makeNSView(context: Context) -> NSScrollView {
-        let table = NSTableView()
+        let table = PreviewResultsTableView()
+        table.onPreview = { [weak coordinator = context.coordinator] in
+            guard let coordinator, let table = coordinator.table,
+                  coordinator.parent.rows.indices.contains(table.selectedRow) else { return }
+            coordinator.parent.onPreview(coordinator.parent.rows[table.selectedRow])
+        }
         for (key, title, width) in [("name","Name",260),("path","Path",380),("size","Size",90),("kind","Kind",130),("mtime","Date Modified",160)] {
             let col = NSTableColumn(identifier: .init(key))
             col.title = title; col.width = CGFloat(width)
@@ -35,6 +41,7 @@ struct ResultsTable: NSViewRepresentable {
             mi.target = context.coordinator
             menu.addItem(mi)
         }
+        add("Quick Look", #selector(Coordinator.ctxPreview))
         add("Open", #selector(Coordinator.ctxOpen))
         let openWith = NSMenuItem(title: "Open With", action: nil, keyEquivalent: "")
         let openWithSub = NSMenu(title: "Open With")
@@ -189,6 +196,7 @@ struct ResultsTable: NSViewRepresentable {
         private func clickedRecord() -> FileRecord? {
             contextRecord
         }
+        @objc func ctxPreview()  { if let r = clickedRecord() { parent.onPreview(r) } }
         @objc func ctxOpen()     { if let r = clickedRecord() { ResultActions.open(r) } }
         @objc func ctxReveal()   { if let r = clickedRecord() { ResultActions.reveal(r) } }
         @objc func ctxCopyPath() { if let r = clickedRecord() { ResultActions.copyPath(r) } }
@@ -273,5 +281,21 @@ struct ResultsTable: NSViewRepresentable {
         }
 
         static let df: DateFormatter = { let f = DateFormatter(); f.dateStyle = .medium; f.timeStyle = .short; return f }()
+    }
+}
+
+// Keep Space local to the results table so it remains ordinary text in search.
+// Quick Look presentation itself is owned by SwiftUI's native modifier.
+private final class PreviewResultsTableView: NSTableView {
+    var onPreview: (() -> Void)?
+
+    override func keyDown(with event: NSEvent) {
+        let modifiers = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            .subtracting([.capsLock, .numericPad, .function])
+        if event.charactersIgnoringModifiers == " ", modifiers.isEmpty {
+            if !event.isARepeat { onPreview?() }
+            return
+        }
+        super.keyDown(with: event)
     }
 }
