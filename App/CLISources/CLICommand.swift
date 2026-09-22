@@ -38,13 +38,7 @@ struct CLIOptions: Equatable {
         if arguments == ["--help"] || arguments == ["help"] { return nil }
         if arguments == ["--version"] { return nil }
         guard arguments.first == "search" else { throw CLIError.invalidArguments("Expected `search`.") }
-        var format: Format = .paths
-        var usesNull = false
-        var limit = 1_000
-        var timeout: TimeInterval = 30
-        var matchPath = false
-        var caseSensitive = false
-        var wholeWord = false
+        var values = Values()
         var query: String?
         var index = 1
         while index < arguments.count {
@@ -55,31 +49,7 @@ struct CLIOptions: Equatable {
                 query = values[0]
                 break
             }
-            switch argument {
-            case "--format":
-                index += 1
-                guard index < arguments.count, let value = Format(rawValue: arguments[index]) else {
-                    throw CLIError.invalidArguments("`--format` must be `paths` or `json`.")
-                }
-                format = value
-            case "--null": usesNull = true
-            case "--limit":
-                index += 1
-                guard index < arguments.count, let value = Int(arguments[index]), (1...10_000).contains(value) else {
-                    throw CLIError.invalidArguments("`--limit` must be an integer from 1 to 10000.")
-                }
-                limit = value
-            case "--timeout":
-                index += 1
-                guard index < arguments.count, let value = TimeInterval(arguments[index]), value > 0 else {
-                    throw CLIError.invalidArguments("`--timeout` must be positive seconds.")
-                }
-                timeout = value
-            case "--match-path": matchPath = true
-            case "--case-sensitive": caseSensitive = true
-            case "--whole-word": wholeWord = true
-            default: throw CLIError.invalidArguments("Unknown option `\(argument)`.")
-            }
+            index = try values.consume(argument, in: arguments, at: index)
             index += 1
         }
         guard let query else { throw CLIError.invalidArguments("Provide a query after `--`.") }
@@ -87,9 +57,49 @@ struct CLIOptions: Equatable {
               !query.utf8.contains(0), query.lengthOfBytes(using: .utf8) <= 16 * 1024 else {
             throw CLIError.invalidArguments("Query must be nonblank, contain no NUL bytes, and be at most 16 KiB.")
         }
-        guard !usesNull || format == .paths else { throw CLIError.invalidArguments("`--null` requires `--format paths`.") }
-        return CLIOptions(query: query, format: format, usesNull: usesNull, limit: limit, timeout: timeout,
-                          matchPath: matchPath, caseSensitive: caseSensitive, wholeWord: wholeWord)
+        guard !values.usesNull || values.format == .paths else { throw CLIError.invalidArguments("`--null` requires `--format paths`.") }
+        return CLIOptions(query: query, format: values.format, usesNull: values.usesNull, limit: values.limit, timeout: values.timeout,
+                          matchPath: values.matchPath, caseSensitive: values.caseSensitive, wholeWord: values.wholeWord)
+    }
+
+    private struct Values {
+        var format: Format = .paths
+        var usesNull = false
+        var limit = 1_000
+        var timeout: TimeInterval = 30
+        var matchPath = false
+        var caseSensitive = false
+        var wholeWord = false
+
+        mutating func consume(_ argument: String, in arguments: [String], at index: Int) throws -> Int {
+            if consumeFlag(argument) { return index }
+            let valueIndex = index + 1
+            guard valueIndex < arguments.count else { throw CLIError.invalidArguments("Missing value for `\(argument)`.") }
+            switch argument {
+            case "--format":
+                guard let value = Format(rawValue: arguments[valueIndex]) else { throw CLIError.invalidArguments("`--format` must be `paths` or `json`.") }
+                format = value
+            case "--limit":
+                guard let value = Int(arguments[valueIndex]), (1...10_000).contains(value) else { throw CLIError.invalidArguments("`--limit` must be an integer from 1 to 10000.") }
+                limit = value
+            case "--timeout":
+                guard let value = TimeInterval(arguments[valueIndex]), value > 0 else { throw CLIError.invalidArguments("`--timeout` must be positive seconds.") }
+                timeout = value
+            default: throw CLIError.invalidArguments("Unknown option `\(argument)`.")
+            }
+            return valueIndex
+        }
+
+        private mutating func consumeFlag(_ argument: String) -> Bool {
+            switch argument {
+            case "--null": usesNull = true
+            case "--match-path": matchPath = true
+            case "--case-sensitive": caseSensitive = true
+            case "--whole-word": wholeWord = true
+            default: return false
+            }
+            return true
+        }
     }
 }
 
