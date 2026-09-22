@@ -13,7 +13,13 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(help.exitCode, 0)
         XCTAssertTrue(String(decoding: help.stdout, as: UTF8.self).contains("Usage:"))
         XCTAssertEqual(version.exitCode, 0)
+        XCTAssertEqual(String(decoding: version.stdout, as: UTF8.self), "EverythingMac \(BuildVersion.display)\n")
         XCTAssertEqual(transport.searches, 0)
+    }
+
+    func testVersionWithoutStampIdentifiesUnknownRevision() {
+        XCTAssertEqual(BuildVersion.display(from: ["CFBundleShortVersionString": "1.2.3"]),
+                       "1.2.3 (revision unknown)")
     }
 
     func testPathsNullOutputPreservesControlCharacters() async {

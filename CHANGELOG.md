@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Show the build's Git revision in About EverythingMac and the bundled CLI's
+  `--version` output; mark builds from modified worktrees as dirty.
 - Bundle the `everythingmac` search CLI with bounded results, deadlines,
   structured JSON or path output, cancellation, and explicit exit statuses.
 - Add a default-off setting for signed command-line searches. The search

@@ -88,6 +88,7 @@ targets:
     platform: macOS
     sources:
       - Shared/ServiceProtocol.swift
+      - Shared/BuildVersion.swift
       - CLISources/CLICommand.swift
       - Tests/CLITests
     dependencies:
@@ -221,6 +222,14 @@ targets:
           fi
           ditto "${SRCROOT}/LaunchAgents/com.everythingmac.indexing-agent.plist" "${agent_dir}/com.everythingmac.indexing-agent.plist"
           ditto "${SRCROOT}/LaunchAgents/com.everythingmac.search.plist" "${agent_dir}/com.everythingmac.search.plist"
+      - name: Stamp Source Revision
+        basedOnDependencyAnalysis: false
+        inputFiles:
+          - "$(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)"
+        script: |
+          set -euo pipefail
+          "${SRCROOT}/../scripts/stamp-build-version.sh" \
+            "${TARGET_BUILD_DIR}/${INFOPLIST_PATH}" "${MARKETING_VERSION}"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.app

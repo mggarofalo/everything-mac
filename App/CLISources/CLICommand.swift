@@ -154,7 +154,7 @@ struct CLIRunner {
                 return success(stdout: Data((CLIOptions.help + "\n").utf8))
             }
             if arguments == ["--version"] || arguments == ["search", "--version"] {
-                return success(stdout: Data("EverythingMac 0.9.7\n".utf8))
+                return success(stdout: Data("EverythingMac \(BuildVersion.display)\n".utf8))
             }
             let options = try CLIOptions.parse(arguments: arguments)
             guard let options else { return success(stdout: Data((CLIOptions.help + "\n").utf8)) }
