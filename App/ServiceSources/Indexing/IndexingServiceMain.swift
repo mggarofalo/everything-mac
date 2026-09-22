@@ -59,25 +59,7 @@ private final class IndexService: @unchecked Sendable {
             let status = await index.serviceStatus(hasFullDiskAccess: FullDiskAccess.isGranted())
             return .success(status)
         case .search:
-            guard FullDiskAccess.isGranted() else {
-                return .failure(ServiceErrorCode.permissionDenied.message, code: .permissionDenied)
-            }
-            let payload = try requirePayload(request)
-            let query = try JSONDecoder().decode(SearchRequest.self, from: payload)
-            guard let token else { return .failure("Missing search token") }
-            guard !token.isCancelled else { throw ServiceErrorCode.cancelled }
-            guard (1...10_000).contains(query.limit) else {
-                return .failure("Limit must be between 1 and 10000.", code: .invalidQuery)
-            }
-            let response = try await index.searchResponse(
-                query.text, matchPath: query.matchPath,
-                caseInsensitive: query.caseInsensitive, wholeWord: query.wholeWord,
-                usesRegularExpression: query.usesRegularExpression,
-                sort: query.sort, ascending: query.ascending, limit: query.limit,
-                interactive: query.supersedeExisting == true,
-                isCancelled: { token.isCancelled }
-            )
-            return .success(response)
+            return try await handleSearch(request, token: token)
         case .cancelSearch:
             // Handled synchronously by perform(), before creating this task.
             return .success(true)
@@ -94,7 +76,32 @@ private final class IndexService: @unchecked Sendable {
             await index.rescanAll(accessGeneration: generation)
             await index.flush(accessGeneration: generation)
             return .success(true)
+        case .getAutomationAccess, .setAutomationAccess:
+            return .failure(ServiceErrorCode.permissionDenied.message, code: .permissionDenied)
         }
+    }
+
+    private func handleSearch(_ request: ServiceRequest,
+                              token: SearchCancellationToken?) async throws -> ServiceReply {
+        guard FullDiskAccess.isGranted() else {
+            return .failure(ServiceErrorCode.permissionDenied.message, code: .permissionDenied)
+        }
+        let payload = try requirePayload(request)
+        let query = try JSONDecoder().decode(SearchRequest.self, from: payload)
+        guard let token else { return .failure("Missing search token") }
+        guard !token.isCancelled else { throw ServiceErrorCode.cancelled }
+        guard (1...10_000).contains(query.limit) else {
+            return .failure("Limit must be between 1 and 10000.", code: .invalidQuery)
+        }
+        let response = try await index.searchResponse(
+            query.text, matchPath: query.matchPath,
+            caseInsensitive: query.caseInsensitive, wholeWord: query.wholeWord,
+            usesRegularExpression: query.usesRegularExpression,
+            sort: query.sort, ascending: query.ascending, limit: query.limit,
+            interactive: query.supersedeExisting == true,
+            isCancelled: { token.isCancelled }
+        )
+        return .success(response)
     }
 
     private func requirePayload(_ request: ServiceRequest) throws -> Data {

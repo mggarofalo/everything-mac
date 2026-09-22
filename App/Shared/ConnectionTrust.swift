@@ -18,9 +18,14 @@ enum ConnectionTrust {
                                     identifiers: Set<String>) -> String? {
         guard let own = identityForSelf(),
               let guest = identity(forPID: connection.processIdentifier),
-              own.teamIdentifier == guest.teamIdentifier,
-              identifiers.contains(guest.identifier) else { return nil }
+              accepts(identifier: guest.identifier, teamIdentifier: guest.teamIdentifier,
+                      ownTeamIdentifier: own.teamIdentifier, identifiers: identifiers) else { return nil }
         return guest.identifier
+    }
+
+    static func accepts(identifier: String, teamIdentifier: String,
+                        ownTeamIdentifier: String, identifiers: Set<String>) -> Bool {
+        teamIdentifier == ownTeamIdentifier && identifiers.contains(identifier)
     }
 
     private static func identityForSelf() -> Identity? {

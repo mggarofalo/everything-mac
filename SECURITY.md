@@ -67,10 +67,22 @@ the validated peer identity rather than trusting the caller's priority field.
 All sessions still use the same index and Full Disk Access remains
 exclusive to the indexer.
 
-The search service accepts `com.everythingmac.app`. The indexer accepts
+The search service accepts `com.everythingmac.app` and the separately identified
+`com.everythingmac.cli` command-line client. The signed client identity, not a
+request field, determines its role. CLI sessions may request status, search, and
+cancellation of their own searches; rebuilds, exclusion-rule changes, and
+automation-setting changes require an app session. The indexer accepts
 `EverythingMacSearchService` and shares `com.everythingmac.app` with the main
 application for Full Disk Access. Changes to these signing identifiers must
 update the trust policy and packaging checks together.
+
+Command-line search access is off by default. The search service stores the
+setting in its owner-only application-support directory and checks it for every
+CLI request. Disabling access closes active CLI forwarding connections, canceling
+their indexer work; output already delivered cannot be recalled. Enabling it
+allows any local process running the signed CLI as your user to receive search
+results. The signature authenticates the executable, not its parent script or
+invoking process. The CLI is planned and is not yet included in this release.
 
 ## External search entry points
 

@@ -4,6 +4,7 @@ import IndexCore
 let indexMachServiceName = "com.everythingmac.indexer"
 let searchMachServiceName = "com.everythingmac.search"
 let appSigningIdentifier = "com.everythingmac.app"
+let cliSigningIdentifier = "com.everythingmac.cli"
 let indexingServiceSigningIdentifier = appSigningIdentifier
 let searchServiceSigningIdentifier = "EverythingMacSearchService"
 let indexChangedNotification = Notification.Name("com.everythingmac.index-changed")
@@ -20,6 +21,20 @@ enum ServiceOperation: String, Codable, Sendable {
     case rebuild
     case getRules
     case setRules
+    case getAutomationAccess
+    case setAutomationAccess
+}
+
+enum SearchClientRole: Sendable {
+    case app
+    case cli
+
+    func allows(_ operation: ServiceOperation) -> Bool {
+        switch self {
+        case .app: return true
+        case .cli: return operation == .status || operation == .search || operation == .cancelSearch
+        }
+    }
 }
 
 struct ServiceRequest: Codable, Sendable {

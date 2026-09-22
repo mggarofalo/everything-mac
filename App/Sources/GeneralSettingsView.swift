@@ -5,6 +5,10 @@ struct GeneralSettingsView: View {
     @EnvironmentObject var model: AppModel
     @EnvironmentObject private var shortcut: GlobalShortcutController
     @Binding var showInMenuBar: Bool
+    @State private var automationEnabled = false
+    @State private var automationLoaded = false
+    @State private var automationSaving = false
+    @State private var automationError: String?
     var body: some View {
         Form {
             Section("Search access") {
@@ -37,6 +41,32 @@ struct GeneralSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            Section("Command line") {
+                Toggle("Allow command-line searches", isOn: Binding(
+                    get: { automationEnabled },
+                    set: { enabled in
+                        automationEnabled = enabled
+                        automationSaving = true
+                        Task {
+                            do {
+                                try await model.index.setAutomationAccess(enabled)
+                                automationError = nil
+                            } catch {
+                                automationEnabled = !enabled
+                                automationError = "Could not save command-line access."
+                            }
+                            automationSaving = false
+                        }
+                    }
+                ))
+                .disabled(!automationLoaded || automationSaving)
+                Text("Off by default. When on, any local process running the signed EverythingMac command-line tool as your user can search and receive filenames and paths. Turning this off cancels active command-line searches but cannot recall output already received.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let automationError {
+                    Text(automationError).font(.caption).foregroundStyle(.red)
+                }
+            }
             Section("Index") {
                 LabeledContent("Objects indexed", value: model.total.formatted())
                 if let s = Self.cacheStats() {
@@ -53,6 +83,15 @@ struct GeneralSettingsView: View {
         }
         .formStyle(.grouped)
         .padding(20)
+        .task {
+            do {
+                automationEnabled = try await model.index.automationAccessEnabled()
+                automationError = nil
+            } catch {
+                automationError = "Command-line access setting is unavailable."
+            }
+            automationLoaded = true
+        }
     }
 
     // Size + mtime of the on-disk index cache (~/Library/Application Support/...).
