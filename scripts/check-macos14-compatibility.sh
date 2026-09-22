@@ -14,7 +14,8 @@ fi
 derived_data="$1"
 app_path="$derived_data/Build/Products/Release/EverythingMac.app"
 info_plist="$app_path/Contents/Info.plist"
-metadata_path="$app_path/Contents/Resources/Metadata.appintents/extract.actionsdata"
+metadata_directory="$app_path/Contents/Resources/Metadata.appintents"
+metadata_path=""
 app_pid=""
 
 cleanup() {
@@ -36,16 +37,37 @@ let hasWindow = windows.contains { window in
     (window[kCGWindowOwnerPID as String] as? Int) == processID
         && (window[kCGWindowLayer as String] as? Int) == 0
 }
+
+require_metadata_text() {
+  local text="$1"
+  if ! grep -aq "$text" "$metadata_path"; then
+    echo "App Intents metadata does not contain: $text" >&2
+    exit 1
+  fi
+}
 exit(hasWindow ? EXIT_SUCCESS : EXIT_FAILURE)
 SWIFT
 }
 
 test -x "$app_path/Contents/MacOS/EverythingMac"
-test -f "$metadata_path"
-test "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$info_plist")" = "everythingmac"
-grep -aq "SearchEverythingMacIntent" "$metadata_path"
-grep -aq "EverythingMacShortcuts" "$metadata_path"
-grep -aq 'Search ${query}' "$metadata_path"
+if [[ ! -d "$metadata_directory" ]]; then
+  echo "Missing App Intents metadata directory: $metadata_directory" >&2
+  exit 1
+fi
+metadata_path="$(find "$metadata_directory" -type f -name '*actionsdata' -print -quit)"
+if [[ -z "$metadata_path" ]]; then
+  echo "No App Intents actions data found under $metadata_directory:" >&2
+  find "$metadata_directory" -type f -print >&2
+  exit 1
+fi
+url_scheme="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleURLTypes:0:CFBundleURLSchemes:0' "$info_plist")"
+if [[ "$url_scheme" != "everythingmac" ]]; then
+  echo "Expected URL scheme everythingmac, found $url_scheme." >&2
+  exit 1
+fi
+require_metadata_text "SearchEverythingMacIntent"
+require_metadata_text "EverythingMacShortcuts"
+require_metadata_text 'Search ${query}'
 
 /usr/bin/osascript - "$app_path" <<'APPLESCRIPT'
 on run argv
