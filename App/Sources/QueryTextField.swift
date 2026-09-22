@@ -7,6 +7,8 @@ import SwiftUI
 struct QueryTextField: NSViewRepresentable {
     @Binding var text: String
     var focused: FocusState<Bool>.Binding
+    var focusSignal: Int
+    var isFocusTarget: Bool
     var onTextChange: () -> Void
     var onTab: (_ text: String, _ selection: NSRange) -> String?
 
@@ -32,7 +34,15 @@ struct QueryTextField: NSViewRepresentable {
             context.coordinator.styleOperators()
         }
         view.placeholder.isHidden = !text.isEmpty
-        if focused.wrappedValue, view.window?.firstResponder !== view.textView {
+        let shouldRefocus = context.coordinator.focusSignal != focusSignal
+        context.coordinator.focusSignal = focusSignal
+        if shouldRefocus, isFocusTarget {
+            if view.window?.firstResponder !== view.textView {
+                view.window?.makeFirstResponder(view.textView)
+            }
+            view.textView.selectAll(nil)
+        } else if focused.wrappedValue, !shouldRefocus,
+                  view.window?.firstResponder !== view.textView {
             view.window?.makeFirstResponder(view.textView)
         }
     }
@@ -41,9 +51,13 @@ struct QueryTextField: NSViewRepresentable {
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: QueryTextField
         weak var textView: NSTextView?
+        var focusSignal: Int
         private var applyingStyle = false
 
-        init(_ parent: QueryTextField) { self.parent = parent }
+        init(_ parent: QueryTextField) {
+            self.parent = parent
+            focusSignal = parent.focusSignal
+        }
 
         func textDidBeginEditing(_ notification: Notification) {
             parent.focused.wrappedValue = true
