@@ -71,15 +71,7 @@ if ! jq -e '
   exit 1
 fi
 
-/usr/bin/osascript - "$app_path" <<'APPLESCRIPT'
-on run argv
-    set appBundle to POSIX file (item 1 of argv) as alias
-    tell application "Finder"
-        open appBundle
-        activate
-    end tell
-end run
-APPLESCRIPT
+open -n "$app_path"
 
 for _ in {1..15}; do
   app_pid="$(pgrep -f "$app_path/Contents/MacOS/EverythingMac" | head -n 1 || true)"
