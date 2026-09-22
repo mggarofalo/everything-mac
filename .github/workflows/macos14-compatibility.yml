@@ -1,0 +1,39 @@
+name: macOS 14 compatibility smoke
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/macos14-compatibility.yml
+      - scripts/check-macos14-compatibility.sh
+
+permissions:
+  contents: read
+
+jobs:
+  runtime-smoke:
+    runs-on: macos-14
+    timeout-minutes: 20
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.2.app/Contents/Developer
+      DERIVED_DATA: ${{ runner.temp }}/EverythingMac-macos14-derived-data
+    steps:
+      - uses: actions/checkout@v6
+      - name: Select the macOS 14 runner toolchain
+        run: |
+          test -d "$DEVELOPER_DIR"
+          xcodebuild -version
+          sw_vers
+      - name: Install XcodeGen
+        run: brew install xcodegen
+      - name: Build the app and extract App Intents metadata
+        run: |
+          xcodegen generate --spec App/project.yml --project App
+          xcodebuild -project App/EverythingMac.xcodeproj \
+            -scheme EverythingMac \
+            -configuration Release \
+            -derivedDataPath "$DERIVED_DATA" \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Verify metadata and launch the app
+        run: scripts/check-macos14-compatibility.sh "$DERIVED_DATA"
