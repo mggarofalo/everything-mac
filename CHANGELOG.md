@@ -1,33 +1,16 @@
 # Changelog
 
-## Unreleased
+## 0.10.0
 
-- Show the build's Git revision in About EverythingMac and the bundled CLI's
-  `--version` output; mark builds from modified worktrees as dirty.
-- Bundle the `everythingmac` search CLI with bounded results, deadlines,
-  structured JSON or path output, cancellation, and explicit exit statuses.
-- Add a default-off setting for signed command-line searches. The search
-  service checks access per request and cancels outstanding command-line work
-  when access is disabled; CLI clients cannot change index rules or rebuild.
-- Verify all bundled executable identities and signing teams during installation and DMG packaging.
-- Isolate search cancellation per trusted client connection, bound queued search
-  work, and report cancellation or overload explicitly instead of returning an
-  empty successful result.
-- Add an opt-in global shortcut, with conflict reporting and a configurable physical key
-  combination, plus an optional menu-bar entry for search and settings. Both remain available
-  while the UI has no open windows and are removed by an explicit Quit.
-- Add a Shortcuts search action and the `everythingmac://search?q=` automation URL scheme,
-  reusing an existing search window for repeated URL requests.
-- Define the bounded v1 command-line contract ahead of the command's release.
-  Search service replies now distinguish invalid queries, permission denial,
-  cancellation, and an index with no published snapshot, and report the
-  effective limit, exact truncation, and scan state for successful searches.
-- Refresh background-service registrations after replacing the app bundle, and
-  check indexer responsiveness before timing out startup requests. Long searches
-  can finish without a service restart; unresponsive services still recover.
-- Preview search results with Quick Look using Space, ⌘Y, or the shortcut menu.
-- Use Developer ID signing by default for local installs and preview DMGs;
-  require an explicit override for development signing.
+- Preview selected search results with Quick Look using Space, ⌘Y, or the shortcut menu. The preview follows selection changes.
+- Recover background services after replacing the app, and keep startup checks responsive without interrupting a busy search.
+- Use Developer ID signing by default for local installs and preview DMGs, with an explicit override for development signing.
+- Open search with a configurable global shortcut, an optional menu-bar item, a Shortcuts action, or an `everythingmac://search?q=` URL. Repeated URL requests reuse an existing search window.
+- Bundle the `everythingmac` command-line tool with bounded results, deadlines, JSON and path output, cancellation, and explicit exit statuses.
+- Keep command-line search access off by default. When enabled, access is limited to the signed CLI, which cannot change index rules or rebuild. Turning access off cancels outstanding command-line work.
+- Isolate cancellation between clients and bound queued search work. Report invalid queries, permission denial, cancellation, overload, and index readiness explicitly.
+- Show the source commit in About EverythingMac and CLI version output. Development builds use their exact source commit; release builds use the release commit on main. Modified source builds include a dirty marker.
+- Verify bundled executable identities and signing teams during installation and DMG packaging.
 
 ## 0.9.7
 
