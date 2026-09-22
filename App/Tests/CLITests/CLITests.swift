@@ -66,6 +66,16 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(result.exitCode, 4)
         XCTAssertEqual(transport.cancellations, 1)
     }
+
+    func testCancellationCancelsOnlyThisRequestAndUsesSIGINTStatus() async {
+        let transport = SlowTransport()
+        let task = Task { await CLIRunner(transport: transport).run(arguments: ["search", "--", "a"]) }
+        task.cancel()
+        let result = await task.value
+
+        XCTAssertEqual(result.exitCode, 130)
+        XCTAssertEqual(transport.cancellations, 1)
+    }
 }
 
 private final class MockTransport: CLISearchTransport, @unchecked Sendable {

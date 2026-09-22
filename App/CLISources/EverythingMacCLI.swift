@@ -1,9 +1,18 @@
 import Foundation
+import Dispatch
+import Darwin
 
 @main
 enum EverythingMacCLI {
     static func main() async {
-        let result = await CLIRunner(transport: XPCSearchTransport()).run(arguments: Array(CommandLine.arguments.dropFirst()))
+        signal(SIGPIPE, SIG_IGN)
+        let task = Task { await CLIRunner(transport: XPCSearchTransport()).run(arguments: Array(CommandLine.arguments.dropFirst())) }
+        let interruption = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+        signal(SIGINT, SIG_IGN)
+        interruption.setEventHandler { task.cancel() }
+        interruption.resume()
+        let result = await task.value
+        interruption.cancel()
         FileHandle.standardOutput.write(result.stdout)
         FileHandle.standardError.write(result.stderr)
         exit(result.exitCode)

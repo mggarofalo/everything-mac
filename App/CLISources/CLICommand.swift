@@ -104,13 +104,14 @@ struct CLIOptions: Equatable {
 }
 
 enum CLIError: Error, Equatable {
-    case invalidArguments(String), unavailable(String), timeout, internalError(String)
+    case invalidArguments(String), unavailable(String), timeout, interrupted, internalError(String)
 
     var exitCode: Int32 {
         switch self {
         case .invalidArguments: 2
         case .unavailable: 3
         case .timeout: 4
+        case .interrupted: 130
         case .internalError: 5
         }
     }
@@ -119,6 +120,7 @@ enum CLIError: Error, Equatable {
         switch self {
         case let .invalidArguments(message), let .unavailable(message), let .internalError(message): message
         case .timeout: "Search timed out."
+        case .interrupted: "Search interrupted."
         }
     }
 }
@@ -182,7 +184,7 @@ struct CLIRunner {
             }
         } catch is CancellationError {
             await transport.cancel(requestID)
-            throw CLIError.timeout
+            throw CLIError.interrupted
         } catch let error as CLIError {
             await transport.cancel(requestID)
             throw error

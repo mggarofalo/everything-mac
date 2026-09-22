@@ -96,9 +96,10 @@ The URL has exactly one percent-encoded `q` parameter. Build URLs with an encode
 `URLComponents`; do not substitute query text into the URL string. Shell history can retain URLs,
 so avoid placing sensitive query text directly in a shell command.
 
-## Planned command-line contract
+## Command-line search
 
-The `everythingmac` command is planned; it is not included in this release. Its
+EverythingMac includes `everythingmac` at
+`/Applications/EverythingMac.app/Contents/MacOS/everythingmac`. Its
 signed client will require **Settings → General → Allow command-line searches**,
 which is off by default. Disabling it cancels active command-line searches but
 cannot recall output already received. Any local process invoking the signed
