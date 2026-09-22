@@ -120,7 +120,8 @@ background searches, and eight per connection. Background searches use
 immutable snapshots so UI searches can proceed while a command-line scan runs.
 Excess requests receive an
 explicit overload error. A new UI search supersedes older searches from that
-same UI connection. Independent command-line requests use their own request IDs;
+same UI connection. If its active slots are full, the session keeps only the
+newest UI request pending until capacity frees. Independent command-line requests use their own request IDs;
 cancellation and connection loss affect only requests owned by that connection.
 
 ## Remove EverythingMac

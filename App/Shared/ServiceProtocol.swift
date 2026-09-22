@@ -144,6 +144,18 @@ final class SearchSessionRequests: @unchecked Sendable {
 
     var isClosed: Bool { lock.lock(); defer { lock.unlock() }; return closed }
 
+    func canBegin(_ id: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return !closed && active[id] == nil && active.count < capacity
+    }
+
+    func contains(_ id: UUID) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return active[id] != nil
+    }
+
     func begin(_ id: UUID, supersede: Bool) -> SearchCancellationToken? {
         lock.lock()
         defer { lock.unlock() }
@@ -173,6 +185,80 @@ final class SearchSessionRequests: @unchecked Sendable {
         active.values.forEach { $0.cancel() }
         active.removeAll()
         lock.unlock()
+    }
+}
+
+/// One replaceable interactive request waits while cancelled work still occupies
+/// its real admission slots. The waiting request does not count as running work.
+final class SearchSessionState<Work: Sendable>: @unchecked Sendable {
+    enum Offer {
+        case accepted(replaced: Work?)
+        case closed
+        case duplicate
+    }
+
+    struct Launch {
+        let id: UUID
+        let work: Work
+        let token: SearchCancellationToken
+    }
+
+    private let lock = NSLock()
+    private let active: SearchSessionRequests
+    private var pending: (id: UUID, work: Work)?
+
+    init(capacity: Int = 8) { active = SearchSessionRequests(capacity: capacity) }
+
+    var isClosed: Bool { active.isClosed }
+
+    func beginIndependent(_ id: UUID) -> SearchCancellationToken? {
+        lock.lock()
+        defer { lock.unlock() }
+        return active.begin(id, supersede: false)
+    }
+
+    func offer(_ work: Work, id: UUID) -> Offer {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !active.isClosed else { return .closed }
+        guard !active.contains(id) else { return .duplicate }
+        active.cancel(nil)
+        let replaced = pending?.work
+        pending = (id, work)
+        return .accepted(replaced: replaced)
+    }
+
+    func takeReady(acquire: () -> Bool, releaseWithoutNotification: () -> Void) -> Launch? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let pending, active.canBegin(pending.id), acquire() else { return nil }
+        guard let token = active.begin(pending.id, supersede: false) else {
+            releaseWithoutNotification()
+            return nil
+        }
+        self.pending = nil
+        return Launch(id: pending.id, work: pending.work, token: token)
+    }
+
+    func cancel(_ id: UUID?) -> Work? {
+        lock.lock()
+        defer { lock.unlock() }
+        active.cancel(id)
+        guard id == nil || pending?.id == id else { return nil }
+        let cancelled = pending?.work
+        pending = nil
+        return cancelled
+    }
+
+    func finish(_ id: UUID) { active.finish(id) }
+
+    func close() -> Work? {
+        lock.lock()
+        defer { lock.unlock() }
+        active.close()
+        let abandoned = pending?.work
+        pending = nil
+        return abandoned
     }
 }
 
@@ -244,6 +330,53 @@ final class ConnectionLease: @unchecked Sendable {
     }
 
     deinit { close() }
+}
+
+final class SearchAdmission: @unchecked Sendable {
+    private let lock = NSLock()
+    private let capacity: Int
+    private let backgroundCapacity: Int
+    private var active = 0
+    private var background = 0
+    private var observers: [UUID: @Sendable () -> Void] = [:]
+
+    init(capacity: Int = 32, backgroundCapacity: Int = 2) {
+        self.capacity = capacity
+        self.backgroundCapacity = backgroundCapacity
+    }
+
+    func observe(_ callback: @escaping @Sendable () -> Void) -> UUID {
+        lock.lock()
+        defer { lock.unlock() }
+        let id = UUID()
+        observers[id] = callback
+        return id
+    }
+
+    func removeObserver(_ id: UUID?) {
+        guard let id else { return }
+        lock.lock()
+        observers.removeValue(forKey: id)
+        lock.unlock()
+    }
+
+    func acquire(interactive: Bool) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        guard active < capacity, interactive || background < backgroundCapacity else { return false }
+        active += 1
+        if !interactive { background += 1 }
+        return true
+    }
+
+    func release(interactive: Bool, notify: Bool = true) {
+        lock.lock()
+        active -= 1
+        if !interactive { background -= 1 }
+        let callbacks = notify ? Array(observers.values) : []
+        lock.unlock()
+        callbacks.forEach { $0() }
+    }
 }
 
 struct SearchResponse: Codable, Sendable {

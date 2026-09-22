@@ -1,28 +1,6 @@
 import AppKit
 import IndexCore
 
-private final class SearchAdmission: @unchecked Sendable {
-    private let lock = NSLock()
-    private var active = 0
-    private var background = 0
-
-    func acquire(interactive: Bool) -> Bool {
-        lock.lock()
-        defer { lock.unlock() }
-        guard active < 32, interactive || background < 2 else { return false }
-        active += 1
-        if !interactive { background += 1 }
-        return true
-    }
-
-    func release(interactive: Bool) {
-        lock.lock()
-        active -= 1
-        if !interactive { background -= 1 }
-        lock.unlock()
-    }
-}
-
 private final class IndexService: @unchecked Sendable {
     private let index = IndexActor()
     let admission = SearchAdmission()
@@ -130,19 +108,33 @@ private final class IndexService: @unchecked Sendable {
 }
 
 private final class IndexSession: NSObject, EverythingMacServiceProtocol, @unchecked Sendable {
+    private struct PendingSearch: Sendable {
+        let request: ServiceRequest
+        let reply: @Sendable (Data) -> Void
+    }
+
     private let service: IndexService
-    private let requests = SearchSessionRequests()
+    private let state = SearchSessionState<PendingSearch>()
     private let lease: ConnectionLease
+    private var observerID: UUID?
 
     init(service: IndexService, lease: ConnectionLease) {
         self.service = service
         self.lease = lease
+        super.init()
+        observerID = service.admission.observe { [weak self] in self?.drainPending() }
     }
 
-    func close() { requests.close(); lease.close() }
+    func close() {
+        let abandoned = state.close()
+        service.admission.removeObserver(observerID)
+        lease.close()
+        if let abandoned { send(.failure(ServiceErrorCode.cancelled.message, code: .cancelled),
+                                to: abandoned.reply) }
+    }
 
     func perform(_ data: Data, withReply reply: @escaping @Sendable (Data) -> Void) {
-        guard !requests.isClosed else {
+        guard !state.isClosed else {
             send(.failure("Index session closed", code: .serviceUnavailable), to: reply)
             return
         }
@@ -152,29 +144,66 @@ private final class IndexSession: NSObject, EverythingMacServiceProtocol, @unche
             return
         }
         if request.operation == .cancelSearch {
-            requests.cancel(request.requestID)
+            if let cancelled = state.cancel(request.requestID) {
+                send(.failure(ServiceErrorCode.cancelled.message, code: .cancelled),
+                     to: cancelled.reply)
+            }
             send(.success(true), to: reply)
             return
         }
         let id = request.requestID ?? UUID()
-        let token: SearchCancellationToken?
         let interactive = (try? request.payload.flatMap {
             try JSONDecoder().decode(SearchRequest.self, from: $0)
         })?.supersedeExisting == true
         if request.operation == .search {
+            if interactive {
+                queueInteractive(request, id: id, reply: reply)
+                return
+            }
             guard service.admission.acquire(interactive: interactive) else {
                 send(.failure(ServiceErrorCode.overloaded.message, code: .overloaded), to: reply)
                 return
             }
-            guard let started = requests.begin(id, supersede: interactive) else {
+            guard let token = state.beginIndependent(id) else {
                 service.admission.release(interactive: interactive)
                 send(.failure(ServiceErrorCode.overloaded.message, code: .overloaded), to: reply)
                 return
             }
-            token = started
-        } else {
-            token = nil
+            run(request, id: id, token: token, interactive: false, reply: reply)
+            return
         }
+        run(request, id: id, token: nil, interactive: false, reply: reply)
+    }
+
+    private func queueInteractive(_ request: ServiceRequest, id: UUID,
+                                  reply: @escaping @Sendable (Data) -> Void) {
+        switch state.offer(PendingSearch(request: request, reply: reply), id: id) {
+        case .closed:
+            send(.failure("Index session closed", code: .serviceUnavailable), to: reply)
+        case .duplicate:
+            send(.failure("Duplicate search request ID", code: .invalidQuery), to: reply)
+        case .accepted(let replaced):
+            if let replaced {
+                send(.failure(ServiceErrorCode.cancelled.message, code: .cancelled),
+                     to: replaced.reply)
+            }
+            drainPending()
+        }
+    }
+
+    private func drainPending() {
+        guard let next = state.takeReady(
+            acquire: { service.admission.acquire(interactive: true) },
+            releaseWithoutNotification: {
+                service.admission.release(interactive: true, notify: false)
+            }
+        ) else { return }
+        run(next.work.request, id: next.id, token: next.token,
+            interactive: true, reply: next.work.reply)
+    }
+
+    private func run(_ request: ServiceRequest, id: UUID, token: SearchCancellationToken?,
+                     interactive: Bool, reply: @escaping @Sendable (Data) -> Void) {
         Task {
             var envelope: ServiceReply
             do {
@@ -188,7 +217,7 @@ private final class IndexSession: NSObject, EverythingMacServiceProtocol, @unche
                 envelope = .failure(ServiceErrorCode.cancelled.message, code: .cancelled)
             }
             if request.operation == .search {
-                requests.finish(id)
+                state.finish(id)
                 service.admission.release(interactive: interactive)
             }
             send(envelope, to: reply)
