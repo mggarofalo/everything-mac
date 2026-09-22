@@ -56,6 +56,8 @@ final class AppModel: ObservableObject {
     private var bootstrapTask: Task<Void, Never>?
     private var maintenanceTask: Task<Void, Never>?
     private var accessGeneration: UInt64 = 0
+    private var accessRefreshTask: Task<ServiceAccessState, Never>?
+    private var restartAfterRefresh = false
 
     init(defaults: UserDefaults = .standard, index: SearchClient = SearchClient()) {
         preferences = defaults
@@ -63,6 +65,28 @@ final class AppModel: ObservableObject {
     }
     func refreshFullDiskAccess(
         restartServicesIfDenied: Bool = false
+    ) async -> ServiceAccessState {
+        if restartServicesIfDenied { restartAfterRefresh = true }
+        if let accessRefreshTask { return await accessRefreshTask.value }
+
+        let task = Task {
+            let restartNow = restartAfterRefresh
+            restartAfterRefresh = false
+            var result = await performAccessRefresh(restartServicesIfDenied: restartNow)
+            if restartAfterRefresh && result == .denied && !restartNow {
+                restartAfterRefresh = false
+                result = await performAccessRefresh(restartServicesIfDenied: true)
+            }
+            restartAfterRefresh = false
+            accessRefreshTask = nil
+            return result
+        }
+        accessRefreshTask = task
+        return await task.value
+    }
+
+    private func performAccessRefresh(
+        restartServicesIfDenied: Bool
     ) async -> ServiceAccessState {
         guard let status = await waitForServiceStatus() else {
             return await recoverBackgroundServices()
@@ -89,7 +113,7 @@ final class AppModel: ObservableObject {
         await index.resetConnection()
         switch BackgroundServices.recoverAfterConnectionFailure() {
         case .enabled:
-            return await waitForRestartedServiceAccess(attempts: 30)
+            return await waitForRestartedServiceAccess(attempts: 5)
         case .requiresApproval:
             return .backgroundApprovalRequired
         case .unavailable:
@@ -102,7 +126,7 @@ final class AppModel: ObservableObject {
             ? .backgroundApprovalRequired : .serviceUnavailable
     }
 
-    private func waitForServiceStatus(attempts: Int = 5) async -> ServiceStatus? {
+    private func waitForServiceStatus(attempts: Int = 3) async -> ServiceStatus? {
         for attempt in 0..<attempts {
             if let status = await index.currentStatus() { return status }
             await index.resetConnection()

@@ -113,19 +113,20 @@ actor SearchClient {
         let replyData: Data
         do {
             replyData = try await withCheckedThrowingContinuation { continuation in
-                let once = DataContinuationOnce(continuation)
+                let waiter = ServiceReplyWaiter { continuation.resume(with: $0) }
+                if operation == .status { waiter.timeOut(after: 3) }
                 let proxy = connection.remoteObjectProxyWithErrorHandler { error in
-                    once.complete(.failure(error))
+                    waiter.finish(.failure(error))
                 }
                 guard let service = proxy as? EverythingMacServiceProtocol else {
-                    once.complete(.failure(NSError(
+                    waiter.finish(.failure(NSError(
                         domain: "EverythingMac",
                         code: 2,
                         userInfo: [NSLocalizedDescriptionKey: "Search service unavailable"]
                     )))
                     return
                 }
-                service.perform(request) { once.complete(.success($0)) }
+                service.perform(request) { waiter.finish(.success($0)) }
             }
         } catch {
             if self.connection === connection {

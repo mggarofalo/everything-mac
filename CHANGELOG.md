@@ -22,6 +22,8 @@
   Search service replies now distinguish invalid queries, permission denial,
   cancellation, and an index with no published snapshot, and report the
   effective limit, exact truncation, and scan state for successful searches.
+- Refresh background-service registrations after replacing the app bundle, and
+  time out unresponsive startup requests so recovery and Retry remain available.
 
 ## 0.9.7
 
