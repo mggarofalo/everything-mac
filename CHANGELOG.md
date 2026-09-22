@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Isolate search cancellation per trusted client connection, bound queued search
+  work, and report cancellation or overload explicitly instead of returning an
+  empty successful result.
 - Define the bounded v1 command-line contract ahead of the command's release.
   Search service replies now distinguish invalid queries, permission denial,
   cancellation, and an index with no published snapshot, and report the

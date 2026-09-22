@@ -109,10 +109,19 @@ while a new scan is in progress. An initial scan with no published index is an
 error, including when its current record count is zero.
 
 Exit status is 0 for a successful query, including zero or capped results; 2
-for invalid arguments or query; 3 for unavailable service, unready index, or
-permission/automation denial; 4 for timeout; 5 for internal or protocol error;
+for invalid arguments or query; 3 for unavailable or overloaded service,
+unready index, or permission/automation denial; 4 for timeout; 5 for internal or protocol error;
 and 130 for SIGINT. Failure produces no partial success document. A closed
 output pipe exits cleanly with status 0.
+
+Searches are admitted to the one shared index actor, with at most 32 client
+connections per service, 32 requests in flight across clients, at most two
+background searches, and eight per connection. Background searches use
+immutable snapshots so UI searches can proceed while a command-line scan runs.
+Excess requests receive an
+explicit overload error. A new UI search supersedes older searches from that
+same UI connection. Independent command-line requests use their own request IDs;
+cancellation and connection loss affect only requests owned by that connection.
 
 ## Remove EverythingMac
 

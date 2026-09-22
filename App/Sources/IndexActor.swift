@@ -106,18 +106,16 @@ actor IndexActor {
     func searchResponse(_ text: String, matchPath: Bool, caseInsensitive: Bool = true,
                         wholeWord: Bool = false, usesRegularExpression: Bool = false,
                         sort: QueryEngine.SortKey, ascending: Bool, limit: Int = 5000,
+                        interactive: Bool = true,
                         isCancelled: @escaping @Sendable () -> Bool = { false }) async throws -> SearchResponse {
         guard hasPublishedSnapshot else { throw ServiceErrorCode.indexNotReady }
         guard accessEnabled else { throw ServiceErrorCode.permissionDenied }
         let query = Query(text: text, matchPath: matchPath, caseInsensitive: caseInsensitive,
                           wholeWord: wholeWord, usesRegularExpression: usesRegularExpression)
-        let plan = query.plan
-        guard plan.isValid else { throw ServiceErrorCode.invalidQuery }
-        if let pattern = plan.regularExpression {
-            let options: NSRegularExpression.Options = caseInsensitive ? [.caseInsensitive] : []
-            guard (try? NSRegularExpression(pattern: pattern, options: options)) != nil else {
-                throw ServiceErrorCode.invalidQuery
-            }
+        try validate(query, caseInsensitive: caseInsensitive)
+        if !interactive {
+            return try await searchSnapshot(query, sort: sort, ascending: ascending,
+                                            limit: limit, isCancelled: isCancelled)
         }
         // Re-scan only when the query (not the sort) changed. The key folds in every
         // flag that changes which ids match — matchPath, case sensitivity, whole-word,
@@ -157,6 +155,52 @@ actor IndexActor {
         return SearchResponse(records: records, limit: effectiveLimit,
                               truncated: cachedIDs.count > effectiveLimit,
                               scanning: isRescanning)
+    }
+
+    private func validate(_ query: Query, caseInsensitive: Bool) throws {
+        let plan = query.plan
+        guard plan.isValid else { throw ServiceErrorCode.invalidQuery }
+        if let pattern = plan.regularExpression {
+            let options: NSRegularExpression.Options = caseInsensitive ? [.caseInsensitive] : []
+            guard (try? NSRegularExpression(pattern: pattern, options: options)) != nil else {
+                throw ServiceErrorCode.invalidQuery
+            }
+        }
+    }
+
+    private func searchSnapshot(_ query: Query, sort: QueryEngine.SortKey,
+                                ascending: Bool, limit: Int,
+                                isCancelled: @escaping @Sendable () -> Bool) async throws -> SearchResponse {
+        if !query.isUnconstrained {
+            guard await prepareComponentIndex(isCancelled: isCancelled) else {
+                throw ServiceErrorCode.cancelled
+            }
+        }
+        guard !isCancelled() else { throw ServiceErrorCode.cancelled }
+        let snapshot = store
+        let index = componentIndex
+        let scanning = isRescanning
+        let effectiveLimit = min(max(1, limit), query.requestedLimit ?? Int.max)
+        return try await Task.detached(priority: .utility) {
+            let engine = QueryEngine()
+            let ids = engine.search(query, in: snapshot,
+                                    componentIndex: query.isUnconstrained ? nil : index,
+                                    isCancelled: isCancelled)
+            guard !isCancelled() else { throw ServiceErrorCode.cancelled }
+            let sorted = engine.sortedPrefix(ids, by: sort, ascending: ascending,
+                                             limit: effectiveLimit, in: snapshot,
+                                             isCancelled: isCancelled)
+            guard !isCancelled() else { throw ServiceErrorCode.cancelled }
+            let records = sorted.map { id in
+                FileRecord(id: id, name: snapshot.name(of: id), path: snapshot.path(of: id),
+                           parent: snapshot.parent(of: id), size: snapshot.size(of: id),
+                           mtime: snapshot.mtime(of: id), isDir: snapshot.isDir(of: id),
+                           volID: snapshot.volID(of: id))
+            }
+            guard !isCancelled() else { throw ServiceErrorCode.cancelled }
+            return SearchResponse(records: records, limit: effectiveLimit,
+                                  truncated: ids.count > effectiveLimit, scanning: scanning)
+        }.value
     }
 
     func path(of id: UInt32) -> String { store.path(of: id) }

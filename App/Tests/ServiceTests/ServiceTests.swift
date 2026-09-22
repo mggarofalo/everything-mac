@@ -2,7 +2,130 @@ import Foundation
 import IndexCore
 import XCTest
 
+private final class LockedReplies: @unchecked Sendable {
+    private let lock: NSLock
+    private var values: [Data] = []
+
+    init(lock: NSLock) { self.lock = lock }
+    func append(_ value: Data) { lock.lock(); values.append(value); lock.unlock() }
+    var count: Int { lock.lock(); defer { lock.unlock() }; return values.count }
+}
+
+private final class CancellationProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var checks = 0
+    func shouldCancel() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        checks += 1
+        return checks > 2
+    }
+}
+
+private final class BlockingSearchProbe: @unchecked Sendable {
+    let entered = DispatchSemaphore(value: 0)
+    let release = DispatchSemaphore(value: 0)
+    private let lock = NSLock()
+    private var checks = 0
+    private var released = false
+
+    func check() -> Bool {
+        lock.lock()
+        checks += 1
+        let shouldBlock = checks == 2
+        lock.unlock()
+        if shouldBlock {
+            entered.signal()
+            release.wait()
+        }
+        return false
+    }
+
+    func unblock() {
+        lock.lock()
+        released = true
+        lock.unlock()
+        release.signal()
+    }
+
+    var wasReleased: Bool { lock.lock(); defer { lock.unlock() }; return released }
+}
+
 final class ServiceProtocolTests: XCTestCase {
+    func testClientAdmissionIsBoundedAndReleasesOnce() {
+        let admission = ConnectionAdmission(capacity: 1)
+        let lease = admission.acquire()
+        XCTAssertNotNil(lease)
+        XCTAssertNil(admission.acquire())
+        lease?.close()
+        lease?.close()
+        XCTAssertNotNil(admission.acquire())
+    }
+
+    func testSessionCancellationIsIsolatedAndSupersessionIsLocal() {
+        let ui = SearchSessionRequests()
+        let cli = SearchSessionRequests()
+        let uiFirstID = UUID()
+        let cliID = UUID()
+        let uiFirst = ui.begin(uiFirstID, supersede: true)!
+        let cliSearch = cli.begin(cliID, supersede: false)!
+        ui.cancel(cliID) // An ID from another connection cannot reach its token.
+        XCTAssertFalse(cliSearch.isCancelled)
+        let uiNewest = ui.begin(UUID(), supersede: true)!
+        XCTAssertTrue(uiFirst.isCancelled)
+        XCTAssertFalse(uiNewest.isCancelled)
+        XCTAssertFalse(cliSearch.isCancelled)
+        ui.close()
+        XCTAssertTrue(ui.isClosed)
+        XCTAssertTrue(uiNewest.isCancelled)
+        XCTAssertFalse(cliSearch.isCancelled)
+        XCTAssertNil(ui.begin(UUID(), supersede: false))
+        cli.cancel(cliID)
+        XCTAssertTrue(cliSearch.isCancelled)
+    }
+
+    func testIndependentRequestsTargetedCancellationAndBoundedLifetime() {
+        let session = SearchSessionRequests(capacity: 2)
+        let firstID = UUID()
+        let secondID = UUID()
+        let first = session.begin(firstID, supersede: false)!
+        let second = session.begin(secondID, supersede: false)!
+        XCTAssertNil(session.begin(UUID(), supersede: false))
+        XCTAssertNil(session.begin(firstID, supersede: false))
+        session.cancel(firstID)
+        XCTAssertTrue(first.isCancelled)
+        XCTAssertFalse(second.isCancelled)
+        session.finish(firstID)
+        XCTAssertNotNil(session.begin(UUID(), supersede: false))
+        session.close()
+        XCTAssertTrue(second.isCancelled)
+    }
+
+    func testReplyCallbackWinsOnlyOnceAcrossRacingOutcomes() async throws {
+        let once = ReplyOnce()
+        let lock = NSLock()
+        let replies = LockedReplies(lock: lock)
+        let reply: @Sendable (Data) -> Void = { data in replies.append(data) }
+        await withTaskGroup(of: Void.self) { group in
+            for value in 0..<100 {
+                group.addTask { once.deliver(Data([UInt8(value)]), to: reply) }
+            }
+        }
+        XCTAssertEqual(replies.count, 1)
+    }
+
+    func testClientContinuationIgnoresLateReplyAfterFailure() async {
+        do {
+            let _: Data = try await withCheckedThrowingContinuation { continuation in
+                let once = DataContinuationOnce(continuation)
+                once.complete(.failure(ServiceErrorCode.cancelled))
+                once.complete(.success(Data([1])))
+            }
+            XCTFail("Expected failure")
+        } catch {
+            XCTAssertEqual(error as? ServiceErrorCode, .cancelled)
+        }
+    }
     func testSigningIdentifiersMatchThePermissionAndTrustBoundaries() {
         XCTAssertEqual(appSigningIdentifier, "com.everythingmac.app")
         XCTAssertEqual(indexingServiceSigningIdentifier, appSigningIdentifier)
@@ -11,15 +134,37 @@ final class ServiceProtocolTests: XCTestCase {
     }
 
     func testEveryOperationRoundTrips() throws {
+        let requestID = UUID()
         for operation in [ServiceOperation.status, .search, .cancelSearch, .rebuild,
                           .getRules, .setRules] {
-            let request = ServiceRequest(operation: operation, payload: Data([1, 2, 3]))
+            let request = ServiceRequest(operation: operation, payload: Data([1, 2, 3]),
+                                         requestID: requestID)
             let decoded = try JSONDecoder().decode(
                 ServiceRequest.self, from: JSONEncoder().encode(request)
             )
             XCTAssertEqual(decoded.operation, operation)
             XCTAssertEqual(decoded.payload, request.payload)
+            XCTAssertEqual(decoded.requestID, requestID)
         }
+    }
+
+    func testTrustedForwardingOverridesCallerPriorityAndAssignsRequestID() throws {
+        let query = SearchRequest(text: "report", matchPath: false,
+                                  caseInsensitive: true, wholeWord: false,
+                                  usesRegularExpression: false, sort: .name,
+                                  ascending: true, limit: 10, supersedeExisting: true)
+        let request = ServiceRequest(operation: .search,
+                                     payload: try JSONEncoder().encode(query))
+        let forwarded = try request.trustedForwarding(interactive: false)
+        XCTAssertNotNil(forwarded.requestID)
+        let decoded = try JSONDecoder().decode(SearchRequest.self, from: XCTUnwrap(forwarded.payload))
+        XCTAssertEqual(decoded.text, "report")
+        XCTAssertEqual(decoded.supersedeExisting, false)
+        let userRequest = ServiceRequest(operation: .search,
+                                         payload: try JSONEncoder().encode(decoded),
+                                         requestID: UUID())
+        XCTAssertEqual(try userRequest.trustedForwarding(interactive: true).requestID,
+                       userRequest.requestID)
     }
 
     func testSuccessAndFailureReplies() throws {
@@ -56,6 +201,7 @@ final class ServiceProtocolTests: XCTestCase {
         XCTAssertEqual(decodedRequest.sort, .mtime)
         XCTAssertFalse(decodedRequest.ascending)
         XCTAssertEqual(decodedRequest.limit, 123)
+        XCTAssertNil(decodedRequest.supersedeExisting)
 
         let record = FileRecord(id: 1, name: "résumé\n\u{1}.pdf", path: "/résumé\n\u{1}.pdf", parent: 0,
                                 size: 10, mtime: 20, isDir: false, volID: 1)
@@ -81,6 +227,56 @@ final class ServiceProtocolTests: XCTestCase {
 }
 
 final class IndexActorBoundaryTests: XCTestCase {
+    func testInteractiveSearchRunsWhileBackgroundSnapshotSearchIsBusy() async throws {
+        var store = FileStore()
+        let root = store.append(name: "/", parent: FileStore.noParent, size: 0,
+                                mtime: 0, isDir: true, volID: 1)
+        store.append(name: "candidate", parent: root, size: 0, mtime: 0,
+                     isDir: false, volID: 1)
+        for number in 0..<100_000 {
+            store.append(name: "noise-\(number)", parent: root, size: 0, mtime: 0,
+                         isDir: false, volID: 1)
+        }
+        let actor = IndexActor(store: store, rules: ExcludeRules(), accessEnabled: true)
+        _ = try await actor.searchResponse("candidate", matchPath: false,
+                                           sort: .name, ascending: true)
+        let probe = BlockingSearchProbe()
+        let background = Task {
+            try await actor.searchResponse("", matchPath: false,
+                                           sort: .name, ascending: true,
+                                           interactive: false, isCancelled: { probe.check() })
+        }
+        XCTAssertEqual(probe.entered.wait(timeout: .now() + 5), .success)
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2) { probe.unblock() }
+        let started = Date()
+        let interactive = try await actor.searchResponse("candidate", matchPath: false,
+                                                         sort: .name, ascending: true)
+        print("Interactive search with 100000-record snapshot and blocked background: \(Date().timeIntervalSince(started)) s")
+        XCTAssertEqual(interactive.records.map(\.name), ["candidate"])
+        XCTAssertFalse(probe.wasReleased)
+        _ = try await background.value
+    }
+
+    func testRegexScanObservesCancellationInsideActorWork() async {
+        var store = FileStore()
+        let root = store.append(name: "/", parent: FileStore.noParent, size: 0,
+                                mtime: 0, isDir: true, volID: 1)
+        for number in 0..<12_000 {
+            store.append(name: "candidate-\(number)-aaaaaaaaaaaaaaaa", parent: root,
+                         size: 0, mtime: 0, isDir: false, volID: 1)
+        }
+        let actor = IndexActor(store: store, rules: ExcludeRules(), accessEnabled: true)
+        let probe = CancellationProbe()
+        do {
+            _ = try await actor.searchResponse("candidate.*z", matchPath: false,
+                                               usesRegularExpression: true,
+                                               sort: .name, ascending: true,
+                                               isCancelled: { probe.shouldCancel() })
+            XCTFail("Expected cancellation during regex scan")
+        } catch {
+            XCTAssertEqual(error as? ServiceErrorCode, .cancelled)
+        }
+    }
     func testLegacyApplicationSupportDirectoryMigrates() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
