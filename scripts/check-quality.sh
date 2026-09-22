@@ -84,3 +84,10 @@ xcodebuild -project App/EverythingMac.xcodeproj \
   -configuration Debug \
   CODE_SIGNING_ALLOWED=NO \
   test
+
+echo "Running global-shortcut tests..."
+xcodebuild -project App/EverythingMac.xcodeproj \
+  -scheme EverythingMacShortcutTests \
+  -configuration Debug \
+  CODE_SIGNING_ALLOWED=NO \
+  test

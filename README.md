@@ -72,6 +72,17 @@ The Exclude and Volumes settings control which local paths enter the index. Appl
 
 Network volumes are not indexed. A slow or unavailable share must not block local search.
 
+## Search access
+
+Settings > General can enable a global search shortcut. It is off by default and suggests
+Control-Option-Space. EverythingMac registers the chosen physical key combination only while
+the UI app runs; it does not change macOS shortcut settings or request Accessibility or Input
+Monitoring permission. A registration conflict leaves the previous shortcut active.
+
+You can also choose to show an EverythingMac menu-bar entry. The menu opens search, Settings,
+or explicitly quits the UI app. Both optional access points remain available after closing the
+last window. Quitting removes them while the indexing and search background services continue.
+
 ## Remove EverythingMac
 
 Move `EverythingMac.app` out of Applications or into the Trash. Its removal observer stops and unregisters the indexing and search services. It also deletes the generated index.

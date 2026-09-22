@@ -203,6 +203,8 @@ final class GlobalShortcutController: ObservableObject {
     private func registerCurrentShortcut(persistEnabledOnSuccess: Bool = false) {
         if let message = shortcut.validationError() {
             registrationError = message
+            isEnabled = false
+            defaults.set(false, forKey: Self.enabledKey)
             return
         }
         do {
@@ -214,6 +216,8 @@ final class GlobalShortcutController: ObservableObject {
             }
         } catch {
             registrationError = error.localizedDescription
+            isEnabled = false
+            defaults.set(false, forKey: Self.enabledKey)
         }
     }
 

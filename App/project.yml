@@ -60,6 +60,7 @@ targets:
       - Sources/GlobalShortcut.swift
       - Sources/CarbonGlobalShortcutRegistrar.swift
       - Sources/GlobalShortcutRecorder.swift
+      - Sources/MenuBarPreference.swift
       - Tests/GlobalShortcutTests
     settings:
       base:

@@ -41,11 +41,12 @@ import IndexCore
 
 struct SettingsView: View {
     @EnvironmentObject var model: AppModel
+    @Binding var showInMenuBar: Bool
     @StateObject private var edit = SettingsModel()
 
     var body: some View {
         TabView {
-            GeneralSettingsView()
+            GeneralSettingsView(showInMenuBar: $showInMenuBar)
                 .tabItem { Label("General", systemImage: "gearshape") }
             SearchSettingsView()
                 .tabItem { Label("Search", systemImage: "magnifyingglass") }

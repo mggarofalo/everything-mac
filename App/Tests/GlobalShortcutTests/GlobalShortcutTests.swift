@@ -24,6 +24,18 @@ final class GlobalShortcutTests: XCTestCase {
         XCTAssertTrue(fixture.reloadedController().isEnabled)
     }
 
+    func testFailedEnableLeavesTheShortcutDisabled() {
+        let fixture = Fixture()
+        fixture.registrar.result = .failure(.conflict)
+
+        fixture.controller.enable()
+
+        XCTAssertFalse(fixture.controller.isEnabled)
+        XCTAssertEqual(fixture.controller.registrationError,
+                       GlobalShortcutRegistrationError.conflict.localizedDescription)
+        XCTAssertFalse(fixture.reloadedController().isEnabled)
+    }
+
     func testFailedRebindRetainsPriorRegistrationAndSettings() {
         let fixture = Fixture()
         fixture.controller.enable()
@@ -94,6 +106,17 @@ final class GlobalShortcutTests: XCTestCase {
         recorder.keyDown(with: event)
 
         XCTAssertTrue(recordings.isEmpty)
+    }
+
+    func testMenuBarPreferenceDefaultsOffAndPersists() {
+        let suite = "MenuBarPreferenceTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let preference = MenuBarPreference(defaults: defaults)
+
+        XCTAssertFalse(preference.isVisible)
+        preference.isVisible = true
+        XCTAssertTrue(MenuBarPreference(defaults: defaults).isVisible)
     }
 
     private func shortcut(keyCode: Int) -> GlobalShortcut {

@@ -3,8 +3,34 @@ import IndexCore
 
 struct GeneralSettingsView: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject private var shortcut: GlobalShortcutController
+    @Binding var showInMenuBar: Bool
     var body: some View {
         Form {
+            Section("Search access") {
+                Toggle("Global search shortcut", isOn: Binding(
+                    get: { shortcut.isEnabled },
+                    set: { enabled in enabled ? shortcut.enable() : shortcut.disable() }
+                ))
+                HStack {
+                    GlobalShortcutRecorder(shortcut: shortcut.shortcut, onRecord: shortcut.setShortcut)
+                        .frame(minWidth: 150, maxWidth: 210)
+                    Button("Clear") { shortcut.clearShortcut() }
+                    Button("Restore Suggested") { shortcut.restoreSuggestedShortcut() }
+                }
+                Text("Use Command or Control with another key. \(GlobalShortcut.suggested.displayString) is suggested.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if let error = shortcut.registrationError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+                Toggle("Show in menu bar", isOn: $showInMenuBar)
+                Text("The menu bar and global shortcut remain available while this app is running, even with all windows closed. Quit EverythingMac removes both; indexing and search services continue running.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section("Background services") {
                 LabeledContent("Indexing and search", value: BackgroundServices.statusText)
                 Text("The index and search services stay available when this window is closed or quit.")

@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Add an opt-in global shortcut, with conflict reporting and a configurable physical key
+  combination, plus an optional menu-bar entry for search and settings. Both remain available
+  while the UI has no open windows and are removed by an explicit Quit.
+
 ## 0.9.7
 
 - Keep Developer ID and notarization credentials in macOS Keychain, validate
