@@ -40,6 +40,7 @@ actor IndexActor {
     private var rescanRequested = false
     private var rescanWaiters: [CheckedContinuation<Void, Never>] = []
     private var accessEnabled = false
+    private var hasPublishedSnapshot = false
     private var accessGeneration: UInt64 = 0
     private var saveInProgress = false
     private var revision: UInt64 = 0
@@ -59,13 +60,15 @@ actor IndexActor {
         self.rules = rules
         self.liveRules = rules
         self.accessEnabled = accessEnabled
+        self.hasPublishedSnapshot = accessEnabled
     }
 
     var totalCount: Int { store.liveCount }
 
     func serviceStatus(hasFullDiskAccess: Bool) -> ServiceStatus {
         ServiceStatus(totalCount: store.liveCount, revision: revision,
-                      scanning: isRescanning, hasFullDiskAccess: hasFullDiskAccess)
+                      scanning: isRescanning, hasFullDiskAccess: hasFullDiskAccess,
+                      ready: hasPublishedSnapshot)
     }
 
     // ~/Library/Application Support/EverythingMac/index.idx
@@ -94,6 +97,21 @@ actor IndexActor {
                 usesRegularExpression: Bool = false,
                 sort: QueryEngine.SortKey, ascending: Bool, limit: Int = 5000,
                 isCancelled: @escaping @Sendable () -> Bool = { false }) async -> [FileRecord] {
+        (try? await searchResponse(text, matchPath: matchPath, caseInsensitive: caseInsensitive,
+                                   wholeWord: wholeWord, usesRegularExpression: usesRegularExpression,
+                                   sort: sort, ascending: ascending, limit: limit,
+                                   isCancelled: isCancelled).records) ?? []
+    }
+
+    func searchResponse(_ text: String, matchPath: Bool, caseInsensitive: Bool = true,
+                        wholeWord: Bool = false, usesRegularExpression: Bool = false,
+                        sort: QueryEngine.SortKey, ascending: Bool, limit: Int = 5000,
+                        isCancelled: @escaping @Sendable () -> Bool = { false }) async throws -> SearchResponse {
+        guard accessEnabled else { throw ServiceErrorCode.permissionDenied }
+        guard hasPublishedSnapshot else { throw ServiceErrorCode.indexNotReady }
+        let query = Query(text: text, matchPath: matchPath, caseInsensitive: caseInsensitive,
+                          wholeWord: wholeWord, usesRegularExpression: usesRegularExpression)
+        guard query.plan.isValid else { throw ServiceErrorCode.invalidQuery }
         // Re-scan only when the query (not the sort) changed. The key folds in every
         // flag that changes which ids match — matchPath, case sensitivity, whole-word,
         // and regular-expression mode —
@@ -102,29 +120,25 @@ actor IndexActor {
         let key = (matchPath ? "P" : "N") + (caseInsensitive ? "i" : "s")
             + (wholeWord ? "w" : "x") + (usesRegularExpression ? "r" : "t") + "\u{1}" + text
         if key != cachedQueryKey {
-            let query = Query(text: text, matchPath: matchPath,
-                              caseInsensitive: caseInsensitive, wholeWord: wholeWord,
-                              usesRegularExpression: usesRegularExpression)
             let matches: [UInt32]
             if query.isUnconstrained {
                 matches = engine.search(query, in: store, isCancelled: isCancelled)
             } else {
-                guard await prepareComponentIndex(isCancelled: isCancelled) else { return [] }
+                guard await prepareComponentIndex(isCancelled: isCancelled) else {
+                    throw ServiceErrorCode.cancelled
+                }
                 matches = engine.search(query, in: store, componentIndex: componentIndex,
                                         isCancelled: isCancelled)
             }
-            guard !isCancelled() else { return [] }
+            guard !isCancelled() else { throw ServiceErrorCode.cancelled }
             cachedIDs = matches
             cachedQueryKey = key
         }
-        let commandLimit = Query(text: text, matchPath: matchPath,
-                                 caseInsensitive: caseInsensitive, wholeWord: wholeWord,
-                                 usesRegularExpression: usesRegularExpression).requestedLimit
-        let effectiveLimit = min(max(1, limit), commandLimit ?? Int.max)
+        let effectiveLimit = min(max(1, limit), query.requestedLimit ?? Int.max)
         let sorted = engine.sortedPrefix(cachedIDs, by: sort, ascending: ascending,
                                          limit: effectiveLimit, in: store,
                                          isCancelled: isCancelled)
-        guard !isCancelled() else { return [] }
+        guard !isCancelled() else { throw ServiceErrorCode.cancelled }
         let records = sorted.map { id in
             FileRecord(id: id, name: store.name(of: id), path: store.path(of: id),
                        parent: store.parent(of: id),
@@ -133,7 +147,9 @@ actor IndexActor {
         }
         lastSort = sort
         visibleResultPaths = Set(records.map(\.path))
-        return records
+        return SearchResponse(records: records, limit: effectiveLimit,
+                              truncated: cachedIDs.count > effectiveLimit,
+                              scanning: isRescanning)
     }
 
     func path(of id: UInt32) -> String { store.path(of: id) }
@@ -241,6 +257,7 @@ actor IndexActor {
             }.value
             guard accessEnabled, accessGeneration == scanGeneration, !Task.isCancelled else { return }
             store = newStore
+            hasPublishedSnapshot = true
             beginComponentIndexBuild()
             revision &+= 1
             cachedQueryKey = nil
@@ -269,9 +286,10 @@ actor IndexActor {
         // changed exclude list) the cached index disagrees with the active rules and
         // would keep serving folders that should now be hidden — rebuild instead.
         if let (loaded, evid, savedFingerprint) = try? IndexCache.load(from: url),
-           loaded.count > 0, savedFingerprint == fingerprint,
+           savedFingerprint == fingerprint,
            !Self.isContaminated(loaded) {
             store = loaded
+            hasPublishedSnapshot = true
             beginComponentIndexBuild()
             revision &+= 1
             lastEventID = evid
@@ -348,6 +366,7 @@ actor IndexActor {
         pendingFullRescan = false
         drainScheduled = false
         store = FileStore()
+        hasPublishedSnapshot = false
         discardComponentIndex()
         cachedQueryKey = nil
         cachedIDs.removeAll()

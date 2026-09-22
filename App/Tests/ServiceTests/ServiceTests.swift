@@ -31,6 +31,7 @@ final class ServiceProtocolTests: XCTestCase {
         let failure = ServiceReply.failure("Unavailable")
         XCTAssertNil(failure.payload)
         XCTAssertEqual(failure.error, "Unavailable")
+        XCTAssertEqual(failure.errorCode, .internalError)
     }
 
     func testStatusSearchRequestAndResponseRoundTrip() throws {
@@ -41,6 +42,7 @@ final class ServiceProtocolTests: XCTestCase {
         XCTAssertEqual(decodedStatus.revision, 7)
         XCTAssertTrue(decodedStatus.scanning)
         XCTAssertFalse(decodedStatus.hasFullDiskAccess)
+        XCTAssertFalse(decodedStatus.ready)
 
         let request = SearchRequest(text: "report", matchPath: true, caseInsensitive: false,
                                     wholeWord: true, usesRegularExpression: false,
@@ -55,9 +57,14 @@ final class ServiceProtocolTests: XCTestCase {
         XCTAssertFalse(decodedRequest.ascending)
         XCTAssertEqual(decodedRequest.limit, 123)
 
-        let record = FileRecord(id: 1, name: "report.pdf", path: "/report.pdf", parent: 0,
+        let record = FileRecord(id: 1, name: "résumé\n\u{1}.pdf", path: "/résumé\n\u{1}.pdf", parent: 0,
                                 size: 10, mtime: 20, isDir: false, volID: 1)
-        XCTAssertEqual(try roundTrip(SearchResponse(records: [record])).records, [record])
+        let response = try roundTrip(SearchResponse(records: [record], limit: 1,
+                                                    truncated: true, scanning: true))
+        XCTAssertEqual(response.records, [record])
+        XCTAssertEqual(response.limit, 1)
+        XCTAssertTrue(response.truncated)
+        XCTAssertTrue(response.scanning)
     }
 
     func testServicePathsUsePrivateApplicationSupportNamespace() {
@@ -109,8 +116,62 @@ final class IndexActorBoundaryTests: XCTestCase {
         XCTAssertEqual(status.revision, 0)
         XCTAssertFalse(status.scanning)
         XCTAssertFalse(status.hasFullDiskAccess)
+        XCTAssertFalse(status.ready)
         let results = await actor.search("", matchPath: false, sort: .name, ascending: true)
         XCTAssertEqual(results, [])
+    }
+
+    func testPublishedEmptyIndexIsReadyAndNotTruncated() async throws {
+        let actor = IndexActor(store: FileStore(), rules: ExcludeRules(), accessEnabled: true)
+        let status = await actor.serviceStatus(hasFullDiskAccess: true)
+        XCTAssertTrue(status.ready)
+        XCTAssertEqual(status.totalCount, 0)
+        let response = try await actor.searchResponse("missing", matchPath: false,
+                                                      sort: .name, ascending: true, limit: 1)
+        XCTAssertEqual(response.records, [])
+        XCTAssertFalse(response.truncated)
+        XCTAssertEqual(response.limit, 1)
+    }
+
+    func testSearchReportsInvalidQueryAndPermissionDenial() async {
+        let denied = IndexActor(store: FileStore(), rules: ExcludeRules(), accessEnabled: false)
+        do {
+            _ = try await denied.searchResponse("x", matchPath: false,
+                                                sort: .name, ascending: true)
+            XCTFail("Expected permission denial")
+        } catch {
+            XCTAssertEqual(error as? ServiceErrorCode, .permissionDenied)
+        }
+        let ready = IndexActor(store: FileStore(), rules: ExcludeRules(), accessEnabled: true)
+        do {
+            _ = try await ready.searchResponse("/limit 0", matchPath: false,
+                                               sort: .name, ascending: true)
+            XCTFail("Expected invalid query")
+        } catch {
+            XCTAssertEqual(error as? ServiceErrorCode, .invalidQuery)
+        }
+    }
+
+    func testBoundedSearchReportsExactTruncationAndQueryLimit() async throws {
+        var store = FileStore()
+        let root = store.append(name: "/", parent: FileStore.noParent, size: 0,
+                                mtime: 0, isDir: true, volID: 1)
+        store.append(name: "same", parent: root, size: 0, mtime: 0,
+                     isDir: false, volID: 1)
+        store.append(name: "other", parent: root, size: 0, mtime: 0,
+                     isDir: false, volID: 1)
+        let actor = IndexActor(store: store, rules: ExcludeRules(), accessEnabled: true)
+
+        let exact = try await actor.searchResponse("same", matchPath: false,
+                                                   sort: .name, ascending: true, limit: 1)
+        XCTAssertEqual(exact.records.map(\.name), ["same"])
+        XCTAssertFalse(exact.truncated)
+
+        let capped = try await actor.searchResponse("/limit 1", matchPath: false,
+                                                    sort: .name, ascending: true, limit: 2)
+        XCTAssertEqual(capped.limit, 1)
+        XCTAssertEqual(capped.records.count, 1)
+        XCTAssertTrue(capped.truncated)
     }
 
     func testRulesCanBeUpdatedWithoutDiskAccess() async {

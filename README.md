@@ -72,6 +72,48 @@ The Exclude and Volumes settings control which local paths enter the index. Appl
 
 Network volumes are not indexed. A slow or unavailable share must not block local search.
 
+## Planned command-line contract
+
+The `everythingmac` command is planned; it is not included in this release. Its
+v1 interface is `everythingmac search [options] -- <query>`, with `--help` and
+`--version`. Search accepts exactly one query argument and passes its syntax
+unchanged to the app's parser. Blank queries, NUL bytes, and queries exceeding
+16 KiB of UTF-8 are invalid. Quoting is the shell's responsibility.
+
+Search options are `--format paths|json` (default `paths`), `--null` (paths
+only), `--limit 1..10000` (default 1000), `--timeout` in positive seconds
+(default 30), `--match-path`, `--case-sensitive`, and `--whole-word`. All
+matching modifiers default to false, independently of UI preferences. Use the
+existing `rx:` or `regex:` query syntax for regular expressions. Results sort
+by name ascending, then by full path for equal names. A query's own limit can
+lower `--limit` but cannot raise it. Output is capped; pagination and unlimited
+dumps are deferred.
+
+Paths format writes absolute paths separated by newlines. Use `--null` for NUL
+delimiters when piping arbitrary filenames; filenames containing newlines need
+`--null` or JSON. Status and diagnostics go to stderr, never stdout. JSON uses
+this versioned shape:
+
+```json
+{"schemaVersion":1,"results":[{"path":"/file","name":"file","isDirectory":false,"sizeBytes":0,"modifiedAt":"2026-09-22T00:00:00Z"}],"returnedCount":1,"limit":1000,"truncated":false,"scanning":false}
+```
+
+`path` is absolute, `sizeBytes` is an integer or `null` if unknown, and
+`modifiedAt` is a UTC RFC3339 timestamp or `null` if unknown. A size of zero
+or a Unix epoch timestamp is a real value, not a missing-value marker. The synthetic root has unknown
+metadata. `returnedCount` is the number of returned results; `limit` is the
+effective minimum of the option and query limit. `truncated` is true only when
+more matches exist beyond that limit. No total match count or durable result ID
+is promised. `scanning` is true when a prior complete snapshot is searchable
+while a new scan is in progress. An initial scan with no published index is an
+error, including when its current record count is zero.
+
+Exit status is 0 for a successful query, including zero or capped results; 2
+for invalid arguments or query; 3 for unavailable service, unready index, or
+permission/automation denial; 4 for timeout; 5 for internal or protocol error;
+and 130 for SIGINT. Failure produces no partial success document. A closed
+output pipe exits cleanly with status 0.
+
 ## Remove EverythingMac
 
 Move `EverythingMac.app` out of Applications or into the Trash. Its removal observer stops and unregisters the indexing and search services. It also deletes the generated index.
