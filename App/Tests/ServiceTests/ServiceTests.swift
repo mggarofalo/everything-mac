@@ -58,7 +58,185 @@ private final class PendingLaunchBox: @unchecked Sendable {
     var values: [UUID] { lock.lock(); defer { lock.unlock() }; return ids }
 }
 
+private final class AutomationForwardProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var callback: (@Sendable (Data) -> Void)?
+    private var values: [ServiceReply] = []
+    private var cancellations = 0
+
+    func forward(_ data: Data, callback: @escaping @Sendable (Data) -> Void) {
+        lock.lock(); self.callback = callback; lock.unlock()
+    }
+
+    func cancel() { lock.lock(); cancellations += 1; lock.unlock() }
+
+    func record(_ data: Data) {
+        lock.lock(); values.append(try! JSONDecoder().decode(ServiceReply.self, from: data)); lock.unlock()
+    }
+
+    func completeLate() {
+        lock.lock(); let callback = self.callback; lock.unlock()
+        callback?((try? JSONEncoder().encode(ServiceReply.success(true))) ?? Data())
+    }
+
+    var replies: [ServiceReply] { lock.lock(); defer { lock.unlock() }; return values }
+    var cancelCount: Int { lock.lock(); defer { lock.unlock() }; return cancellations }
+}
+
 final class ServiceProtocolTests: XCTestCase {
+    func testAutomationRoleAndSignatureAllowlist() {
+        let accepted: Set<String> = [appSigningIdentifier, cliSigningIdentifier]
+        XCTAssertTrue(ConnectionTrust.accepts(identifier: appSigningIdentifier,
+                                              teamIdentifier: "TEAM", ownTeamIdentifier: "TEAM",
+                                              identifiers: accepted))
+        XCTAssertTrue(ConnectionTrust.accepts(identifier: cliSigningIdentifier,
+                                              teamIdentifier: "TEAM", ownTeamIdentifier: "TEAM",
+                                              identifiers: accepted))
+        XCTAssertFalse(ConnectionTrust.accepts(identifier: "com.everythingmac.other",
+                                               teamIdentifier: "TEAM", ownTeamIdentifier: "TEAM",
+                                               identifiers: accepted))
+        XCTAssertFalse(ConnectionTrust.accepts(identifier: cliSigningIdentifier,
+                                               teamIdentifier: "OTHER", ownTeamIdentifier: "TEAM",
+                                               identifiers: accepted))
+        XCTAssertFalse(ConnectionTrust.accepts(identifier: cliSigningIdentifier,
+                                               teamIdentifier: "", ownTeamIdentifier: "TEAM",
+                                               identifiers: accepted))
+        XCTAssertFalse(ConnectionTrust.accepts(identifier: cliSigningIdentifier,
+                                               teamIdentifier: "TEAM", ownTeamIdentifier: "TEAM",
+                                               identifiers: [searchServiceSigningIdentifier]))
+        XCTAssertTrue(SearchClientRole.cli.allows(.search))
+        XCTAssertTrue(SearchClientRole.cli.allows(.status))
+        XCTAssertTrue(SearchClientRole.cli.allows(.cancelSearch))
+        for operation in [ServiceOperation.rebuild, .getRules, .setRules,
+                          .getAutomationAccess, .setAutomationAccess] {
+            XCTAssertFalse(SearchClientRole.cli.allows(operation))
+            XCTAssertTrue(SearchClientRole.app.allows(operation))
+        }
+    }
+
+    func testAutomationAccessDefaultsOffPersistsAndRevokes() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("everythingmac-automation-test-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("automation-access")
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true,
+                                                attributes: [.posixPermissions: 0o755])
+        try FileManager.default.setAttributes([.posixPermissions: 0o755],
+                                              ofItemAtPath: directory.path)
+        let access = AutomationAccess(url: url)
+        XCTAssertFalse(access.isEnabled)
+        let revoked = expectation(description: "revoked")
+        let observer = access.observe { revoked.fulfill() }
+        try access.setEnabled(true)
+        XCTAssertTrue(access.isEnabled)
+        XCTAssertTrue(AutomationAccess(url: url).isEnabled)
+        let permissions = try FileManager.default.attributesOfItem(atPath: url.path)
+        XCTAssertEqual((permissions[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        let directoryPermissions = try FileManager.default.attributesOfItem(atPath: directory.path)
+        XCTAssertEqual((directoryPermissions[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+        try access.setEnabled(false)
+        wait(for: [revoked], timeout: 1)
+        XCTAssertFalse(AutomationAccess(url: url).isEnabled)
+        access.removeObserver(observer)
+    }
+
+    func testAppCanSetAccessAndCliCannotForgeMutations() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("everythingmac-auth-session-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let access = AutomationAccess(url: directory.appendingPathComponent("access"))
+        let admission = ConnectionAdmission(capacity: 2)
+        let app = SearchService(lease: try XCTUnwrap(admission.acquire()), role: .app,
+                                automation: access)
+        let cli = SearchService(lease: try XCTUnwrap(admission.acquire()), role: .cli,
+                                automation: access)
+        func request(_ service: SearchService, _ operation: ServiceOperation,
+                     payload: Data? = nil) throws -> ServiceReply {
+            let data = try JSONEncoder().encode(ServiceRequest(operation: operation, payload: payload))
+            var result: ServiceReply?
+            service.perform(data) { response in result = try? JSONDecoder().decode(ServiceReply.self, from: response) }
+            return try XCTUnwrap(result)
+        }
+        XCTAssertEqual(try request(cli, .status).errorCode, .permissionDenied)
+        XCTAssertEqual(try JSONDecoder().decode(Bool.self,
+                       from: XCTUnwrap(request(app, .getAutomationAccess).payload)), false)
+        let enabled = try JSONEncoder().encode(true)
+        XCTAssertNil(try request(app, .setAutomationAccess, payload: enabled).errorCode)
+        XCTAssertTrue(access.isEnabled)
+        for operation in [ServiceOperation.rebuild, .setRules, .getRules,
+                          .setAutomationAccess, .getAutomationAccess] {
+            XCTAssertEqual(try request(cli, operation, payload: enabled).errorCode, .permissionDenied)
+        }
+        app.close(); cli.close()
+    }
+
+    func testDisablingAccessCancelsOutstandingCliReplyOnce() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("everythingmac-auth-revoke-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let access = AutomationAccess(url: directory.appendingPathComponent("access"))
+        try access.setEnabled(true)
+        let admission = ConnectionAdmission(capacity: 1)
+        let probe = AutomationForwardProbe()
+        let cli = SearchService(lease: try XCTUnwrap(admission.acquire()), role: .cli,
+                                automation: access,
+                                testForward: { data, callback in probe.forward(data, callback: callback) },
+                                testCancel: { probe.cancel() })
+        let query = SearchRequest(text: "needle", matchPath: false, caseInsensitive: true,
+                                  wholeWord: false, usesRegularExpression: false,
+                                  sort: .name, ascending: true, limit: 10)
+        let payload = try JSONEncoder().encode(query)
+        let request = try JSONEncoder().encode(ServiceRequest(operation: .search, payload: payload))
+        cli.perform(request) { probe.record($0) }
+        XCTAssertTrue(probe.replies.isEmpty)
+        try access.setEnabled(false)
+        XCTAssertEqual(probe.replies.map(\.errorCode), [.permissionDenied])
+        XCTAssertEqual(probe.cancelCount, 1)
+        probe.completeLate()
+        XCTAssertEqual(probe.replies.count, 1)
+        cli.close()
+    }
+
+    func testDisableWaitsForAlreadyAuthorizedReplyPublication() throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("everythingmac-auth-delivery-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let access = AutomationAccess(url: directory.appendingPathComponent("access"))
+        try access.setEnabled(true)
+        let admission = ConnectionAdmission(capacity: 1)
+        let probe = AutomationForwardProbe()
+        let cli = SearchService(lease: try XCTUnwrap(admission.acquire()), role: .cli,
+                                automation: access,
+                                testForward: { data, callback in probe.forward(data, callback: callback) })
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let delivered = DispatchSemaphore(value: 0)
+        let disableReturned = DispatchSemaphore(value: 0)
+        let request = try JSONEncoder().encode(ServiceRequest(operation: .status, payload: nil))
+        cli.perform(request) { data in
+            entered.signal()
+            release.wait()
+            probe.record(data)
+            delivered.signal()
+        }
+        DispatchQueue.global().async { probe.completeLate() }
+        XCTAssertEqual(entered.wait(timeout: .now() + 2), .success)
+        DispatchQueue.global().async {
+            try? access.setEnabled(false)
+            disableReturned.signal()
+        }
+        let deadline = Date().addingTimeInterval(2)
+        while access.isEnabled && Date() < deadline { Thread.sleep(forTimeInterval: 0.001) }
+        XCTAssertFalse(access.isEnabled)
+        XCTAssertEqual(disableReturned.wait(timeout: .now() + 0.05), .timedOut)
+        release.signal()
+        XCTAssertEqual(delivered.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(disableReturned.wait(timeout: .now() + 2), .success)
+        XCTAssertEqual(probe.replies.count, 1)
+        XCTAssertNil(probe.replies.first?.errorCode)
+        cli.close()
+    }
+
     func testGlobalAdmissionReleaseWakesPreRegisteredPendingSearch() {
         let admission = SearchAdmission(capacity: 1, backgroundCapacity: 1)
         let state = SearchSessionState<String>(capacity: 1)

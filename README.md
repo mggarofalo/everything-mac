@@ -100,7 +100,12 @@ so avoid placing sensitive query text directly in a shell command.
 ## Planned command-line contract
 
 The `everythingmac` command is planned; it is not included in this release. Its
-v1 interface is `everythingmac search [options] -- <query>`, with `--help` and
+signed client will require **Settings → General → Allow command-line searches**,
+which is off by default. Disabling it cancels active command-line searches but
+cannot recall output already received. Any local process invoking the signed
+tool as your user can receive results while access is enabled.
+
+The v1 interface is `everythingmac search [options] -- <query>`, with `--help` and
 `--version`. Search accepts exactly one query argument and passes its syntax
 unchanged to the app's parser. Blank queries, NUL bytes, and queries exceeding
 16 KiB of UTF-8 are invalid. Quoting is the shell's responsibility.
