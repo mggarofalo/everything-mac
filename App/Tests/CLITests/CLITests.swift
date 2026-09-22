@@ -58,6 +58,14 @@ final class CLITests: XCTestCase {
         XCTAssertEqual(result.exitCode, 3)
         XCTAssertEqual(String(decoding: result.stderr, as: UTF8.self), "Command-line search access is disabled.\n")
     }
+
+    func testDeadlineCancelsARequestThatNeverReplies() async {
+        let transport = SlowTransport()
+        let result = await CLIRunner(transport: transport).run(arguments: ["search", "--timeout", "0.001", "--", "a"])
+
+        XCTAssertEqual(result.exitCode, 4)
+        XCTAssertEqual(transport.cancellations, 1)
+    }
 }
 
 private final class MockTransport: CLISearchTransport, @unchecked Sendable {
@@ -77,4 +85,15 @@ private final class MockTransport: CLISearchTransport, @unchecked Sendable {
     }
 
     func cancel(_ requestID: UUID) async {}
+}
+
+private final class SlowTransport: CLISearchTransport, @unchecked Sendable {
+    private(set) var cancellations = 0
+
+    func search(_ request: SearchRequest, deadline: Date) async throws -> SearchResponse {
+        try await Task.sleep(for: .seconds(60))
+        return SearchResponse(records: [])
+    }
+
+    func cancel(_ requestID: UUID) async { cancellations += 1 }
 }
