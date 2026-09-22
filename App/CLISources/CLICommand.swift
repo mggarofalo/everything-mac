@@ -35,7 +35,7 @@ struct CLIOptions: Equatable {
 
     static func parse(arguments: [String]) throws -> CLIOptions? {
         guard !arguments.isEmpty else { throw CLIError.invalidArguments("Expected a command.") }
-        if arguments == ["--help"] || arguments == ["help"] || arguments == ["search", "--help"] { return nil }
+        if arguments == ["--help"] || arguments == ["help"] || arguments == ["search", "--help"] || arguments == ["search", "--version"] { return nil }
         if arguments == ["--version"] { return nil }
         guard arguments.first == "search" else { throw CLIError.invalidArguments("Expected `search`.") }
         var values = Values()
@@ -150,7 +150,7 @@ struct CLIRunner {
             if arguments == ["--help"] || arguments == ["help"] || arguments == ["search", "--help"] {
                 return success(stdout: Data((CLIOptions.help + "\n").utf8))
             }
-            if arguments == ["--version"] {
+            if arguments == ["--version"] || arguments == ["search", "--version"] {
                 return success(stdout: Data("EverythingMac 0.9.7\n".utf8))
             }
             let options = try CLIOptions.parse(arguments: arguments)
@@ -172,16 +172,25 @@ struct CLIRunner {
     private func response(for request: SearchRequest, requestID: UUID, timeout: TimeInterval) async throws -> SearchResponse {
         let deadline = now().addingTimeInterval(timeout)
         do {
-            return try await withThrowingTaskGroup(of: SearchResponse.self) { group in
-                group.addTask { try await transport.search(request, requestID: requestID, deadline: deadline) }
-                group.addTask {
-                    try await Task.sleep(for: .seconds(timeout))
-                    throw CLIError.timeout
+            let race = CLIResponseContinuation()
+            Task {
+                do {
+                    race.complete(.success(try await transport.search(request, requestID: requestID, deadline: deadline)))
+                } catch {
+                    race.complete(.failure(error))
                 }
-                guard let first = try await group.next() else { throw CLIError.internalError("No service response.") }
-                group.cancelAll()
-                return first
             }
+            Task {
+                do {
+                    try await Task.sleep(for: .seconds(timeout))
+                    race.complete(.failure(CLIError.timeout))
+                } catch { }
+            }
+            return try await withTaskCancellationHandler(operation: {
+                try await race.wait()
+            }, onCancel: {
+                race.complete(.failure(CancellationError()))
+            })
         } catch is CancellationError {
             await transport.cancel(requestID)
             throw CLIError.interrupted
@@ -214,6 +223,31 @@ struct CLIRunner {
     private func success(stdout: Data) -> CLIResult { CLIResult(exitCode: 0, stdout: stdout, stderr: Data()) }
     private func failure(_ error: CLIError) -> CLIResult {
         CLIResult(exitCode: error.exitCode, stdout: Data(), stderr: Data((error.message + "\n").utf8))
+    }
+}
+
+private final class CLIResponseContinuation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<SearchResponse, Error>?
+    private var result: Result<SearchResponse, Error>?
+
+    func wait() async throws -> SearchResponse {
+        try await withCheckedThrowingContinuation { continuation in
+            lock.lock()
+            if let result { lock.unlock(); continuation.resume(with: result); return }
+            self.continuation = continuation
+            lock.unlock()
+        }
+    }
+
+    func complete(_ result: Result<SearchResponse, Error>) {
+        lock.lock()
+        guard self.result == nil else { lock.unlock(); return }
+        self.result = result
+        let continuation = continuation
+        self.continuation = nil
+        lock.unlock()
+        continuation?.resume(with: result)
     }
 }
 

@@ -7,8 +7,8 @@ final class CLITests: XCTestCase {
         let transport = MockTransport()
         let runner = CLIRunner(transport: transport)
 
-        let help = await runner.run(arguments: ["--help"])
-        let version = await runner.run(arguments: ["--version"])
+        let help = await runner.run(arguments: ["search", "--help"])
+        let version = await runner.run(arguments: ["search", "--version"])
 
         XCTAssertEqual(help.exitCode, 0)
         XCTAssertTrue(String(decoding: help.stdout, as: UTF8.self).contains("Usage:"))
@@ -101,7 +101,7 @@ private final class SlowTransport: CLISearchTransport, @unchecked Sendable {
     private(set) var cancellations = 0
 
     func search(_ request: SearchRequest, requestID: UUID, deadline: Date) async throws -> SearchResponse {
-        try await Task.sleep(for: .seconds(60))
+        await withCheckedContinuation { (_: CheckedContinuation<Void, Never>) in }
         return SearchResponse(records: [])
     }
 
