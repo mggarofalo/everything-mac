@@ -41,14 +41,6 @@ exit(hasWindow ? EXIT_SUCCESS : EXIT_FAILURE)
 SWIFT
 }
 
-require_metadata_text() {
-  local text="$1"
-  if ! grep -aq "$text" "$metadata_path"; then
-    echo "App Intents metadata does not contain: $text" >&2
-    exit 1
-  fi
-}
-
 test -x "$app_path/Contents/MacOS/EverythingMac"
 if [[ ! -d "$metadata_directory" ]]; then
   echo "Missing App Intents metadata directory: $metadata_directory" >&2
@@ -65,10 +57,19 @@ if [[ "$url_scheme" != "everythingmac" ]]; then
   echo "Expected URL scheme everythingmac, found $url_scheme." >&2
   exit 1
 fi
-require_metadata_text "SearchEverythingMacIntent"
-require_metadata_text 'Search ${query}'
-require_metadata_text 'Search in ${applicationName}'
-require_metadata_text '"openAppWhenRun":true'
+if ! jq -e '
+  .actions.SearchEverythingMacIntent as $intent
+  | $intent.isDiscoverable == true
+  and $intent.openAppWhenRun == true
+  and $intent.actionConfiguration.actionSummary.wrapper.summaryString.formatString == "Search ${query}"
+  and any($intent.parameters[]; .name == "query" and .isOptional == false)
+  and any(.autoShortcuts[];
+      .actionIdentifier == "SearchEverythingMacIntent"
+      and any(.phraseTemplates[]; .key == "Search in ${applicationName}"))
+' "$metadata_path" >/dev/null; then
+  echo "App Intents metadata is missing a discoverable required-query search action or shortcut." >&2
+  exit 1
+fi
 
 /usr/bin/osascript - "$app_path" <<'APPLESCRIPT'
 on run argv
