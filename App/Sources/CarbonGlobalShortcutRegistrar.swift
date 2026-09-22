@@ -9,6 +9,7 @@ final class CarbonGlobalShortcutRegistrar: GlobalShortcutRegistering {
     private var handler: EventHandlerRef?
     private var nextIdentifier: UInt32 = 1
     private var actions: [UInt32: @MainActor () -> Void] = [:]
+    private var repeatFilter = HotKeyRepeatFilter()
 
     func register(_ shortcut: GlobalShortcut, action: @escaping @MainActor () -> Void) throws -> any GlobalShortcutRegistration {
         try installHandlerIfNeeded()
@@ -30,11 +31,14 @@ final class CarbonGlobalShortcutRegistrar: GlobalShortcutRegistering {
 
     private func installHandlerIfNeeded() throws {
         guard handler == nil else { return }
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)
-        )
+        var eventTypes = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                          eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
+                          eventKind: UInt32(kEventHotKeyReleased))
+        ]
         let status = InstallEventHandler(
-            GetApplicationEventTarget(), Self.handleEvent, 1, &eventType,
+            GetApplicationEventTarget(), Self.handleEvent, eventTypes.count, &eventTypes,
             Unmanaged.passUnretained(self).toOpaque(), &handler
         )
         guard status == noErr else { throw GlobalShortcutRegistrationError.system(status) }
@@ -43,6 +47,16 @@ final class CarbonGlobalShortcutRegistrar: GlobalShortcutRegistering {
     private func unregister(identifier: UInt32, hotKey: EventHotKeyRef) {
         UnregisterEventHotKey(hotKey)
         actions[identifier] = nil
+        repeatFilter.release(identifier)
+    }
+
+    private func handle(identifier: UInt32, kind: UInt32) {
+        if kind == UInt32(kEventHotKeyReleased) {
+            repeatFilter.release(identifier)
+            return
+        }
+        guard repeatFilter.shouldDeliverPress(identifier) else { return }
+        actions[identifier]?()
     }
 
     private static let handleEvent: EventHandlerUPP = { _, event, userData in
@@ -56,7 +70,8 @@ final class CarbonGlobalShortcutRegistrar: GlobalShortcutRegistering {
         guard status == noErr else { return status }
         let registrar = Unmanaged<CarbonGlobalShortcutRegistrar>.fromOpaque(userData)
             .takeUnretainedValue()
-        Task { @MainActor in registrar.actions[identifier.id]?() }
+        let kind = GetEventKind(event)
+        Task { @MainActor in registrar.handle(identifier: identifier.id, kind: kind) }
         return noErr
     }
 
@@ -77,5 +92,20 @@ final class CarbonGlobalShortcutRegistrar: GlobalShortcutRegistering {
             self.hotKey = nil
         }
 
+    }
+}
+
+/// Carbon supplies pressed and released events for a registered hot key. Keeping
+/// the short-lived press state prevents repeated pressed callbacks while a key is
+/// held, then clears promptly on release.
+struct HotKeyRepeatFilter {
+    private var pressedIdentifiers: Set<UInt32> = []
+
+    mutating func shouldDeliverPress(_ identifier: UInt32) -> Bool {
+        pressedIdentifiers.insert(identifier).inserted
+    }
+
+    mutating func release(_ identifier: UInt32) {
+        pressedIdentifiers.remove(identifier)
     }
 }

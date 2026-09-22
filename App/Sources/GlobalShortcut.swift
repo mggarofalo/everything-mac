@@ -163,12 +163,22 @@ final class GlobalShortcutController: ObservableObject {
         registrationError = nil
     }
 
-    /// Called from application termination after the UI has gone away.
-    func stop() { disable() }
+    /// Called from application termination after the UI has gone away. This only
+    /// releases the live system registration; the user's enabled preference stays
+    /// in place and is restored at the next launch.
+    func stop() {
+        registration?.unregister()
+        registration = nil
+        registrationError = nil
+    }
 
     /// Attempts the replacement before touching the current registration. A
     /// registration failure therefore leaves the previous working shortcut active.
     func setShortcut(_ candidate: GlobalShortcut) {
+        guard candidate != shortcut else {
+            registrationError = nil
+            return
+        }
         guard let message = candidate.validationError() else {
             registrationError = nil
             if !isEnabled {

@@ -21,7 +21,7 @@ final class GlobalShortcutTests: XCTestCase {
 
         XCTAssertTrue(fixture.controller.isEnabled)
         XCTAssertEqual(fixture.registrar.registeredShortcuts, [.suggested])
-        XCTAssertTrue(fixture.reloadedController().isEnabled)
+        XCTAssertTrue(fixture.reloadedController(registrar: MockRegistrar()).isEnabled)
     }
 
     func testFailedEnableLeavesTheShortcutDisabled() {
@@ -33,7 +33,7 @@ final class GlobalShortcutTests: XCTestCase {
         XCTAssertFalse(fixture.controller.isEnabled)
         XCTAssertEqual(fixture.controller.registrationError,
                        GlobalShortcutRegistrationError.conflict.localizedDescription)
-        XCTAssertFalse(fixture.reloadedController().isEnabled)
+        XCTAssertFalse(fixture.reloadedController(registrar: MockRegistrar()).isEnabled)
     }
 
     func testFailedRebindRetainsPriorRegistrationAndSettings() {
@@ -50,7 +50,7 @@ final class GlobalShortcutTests: XCTestCase {
         XCTAssertFalse(fixture.registrar.registrations[0].didUnregister)
         XCTAssertEqual(fixture.controller.registrationError,
                        GlobalShortcutRegistrationError.conflict.localizedDescription)
-        XCTAssertEqual(fixture.reloadedController().shortcut, prior)
+        XCTAssertEqual(fixture.reloadedController(registrar: MockRegistrar()).shortcut, prior)
     }
 
     func testSuccessfulRebindRegistersReplacementBeforeRemovingPriorBinding() {
@@ -63,10 +63,10 @@ final class GlobalShortcutTests: XCTestCase {
         XCTAssertEqual(fixture.controller.shortcut, candidate)
         XCTAssertTrue(fixture.registrar.registrations[0].didUnregister)
         XCTAssertFalse(fixture.registrar.registrations[1].didUnregister)
-        XCTAssertEqual(fixture.reloadedController().shortcut, candidate)
+        XCTAssertEqual(fixture.reloadedController(registrar: MockRegistrar()).shortcut, candidate)
     }
 
-    func testDisableAndStopUnregisterTheActiveBinding() {
+    func testDisableUnregistersAndClearsTheEnabledPreference() {
         let fixture = Fixture()
         fixture.controller.enable()
 
@@ -74,10 +74,21 @@ final class GlobalShortcutTests: XCTestCase {
         XCTAssertTrue(fixture.registrar.registrations[0].didUnregister)
         XCTAssertFalse(fixture.controller.isEnabled)
 
+    }
+
+    func testStopUnregistersWithoutClearingTheEnabledPreference() {
+        let fixture = Fixture()
         fixture.controller.enable()
+
         fixture.controller.stop()
-        XCTAssertTrue(fixture.registrar.registrations[1].didUnregister)
-        XCTAssertFalse(fixture.controller.isEnabled)
+
+        XCTAssertTrue(fixture.registrar.registrations[0].didUnregister)
+        XCTAssertTrue(fixture.controller.isEnabled)
+        let reloadedRegistrar = MockRegistrar()
+        let reloaded = fixture.reloadedController(registrar: reloadedRegistrar)
+        reloaded.start()
+        XCTAssertTrue(reloaded.isEnabled)
+        XCTAssertEqual(reloadedRegistrar.registeredShortcuts, [.suggested])
     }
 
     func testRejectsBareAndKnownReservedShortcuts() {
@@ -106,6 +117,34 @@ final class GlobalShortcutTests: XCTestCase {
         recorder.keyDown(with: event)
 
         XCTAssertTrue(recordings.isEmpty)
+    }
+
+    func testRestoringTheActiveSuggestionDoesNotReregister() throws {
+        let fixture = Fixture()
+        fixture.controller.enable()
+        fixture.registrar.result = .failure(.conflict)
+        let recorder = ShortcutRecorderView()
+        recorder.onRecord = fixture.controller.setShortcut
+        let event = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [.control, .option], timestamp: 0,
+            windowNumber: 0, context: nil, characters: " ", charactersIgnoringModifiers: " ",
+            isARepeat: false, keyCode: UInt16(kVK_Space)
+        ))
+
+        recorder.keyDown(with: event)
+        fixture.controller.restoreSuggestedShortcut()
+
+        XCTAssertEqual(fixture.registrar.registrations.count, 1)
+        XCTAssertNil(fixture.controller.registrationError)
+    }
+
+    func testHotKeyRepeatFilterDeliversOnceUntilRelease() {
+        var filter = HotKeyRepeatFilter()
+
+        XCTAssertTrue(filter.shouldDeliverPress(17))
+        XCTAssertFalse(filter.shouldDeliverPress(17))
+        filter.release(17)
+        XCTAssertTrue(filter.shouldDeliverPress(17))
     }
 
     func testMenuBarPreferenceDefaultsOffAndPersists() {
@@ -140,8 +179,8 @@ private final class Fixture {
 
     deinit { defaults.removePersistentDomain(forName: suite) }
 
-    func reloadedController() -> GlobalShortcutController {
-        GlobalShortcutController(defaults: defaults, registrar: MockRegistrar(), action: {})
+    func reloadedController(registrar: MockRegistrar) -> GlobalShortcutController {
+        GlobalShortcutController(defaults: defaults, registrar: registrar, action: {})
     }
 }
 
