@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [[ "${GITHUB_ACTIONS:-}" != "true" ]]; then
+  echo "This smoke check launches an app and is limited to disposable GitHub Actions runners." >&2
+  exit 64
+fi
+
 if [[ $# -ne 1 ]]; then
   echo "Usage: $0 <derived-data-path>" >&2
   exit 64
