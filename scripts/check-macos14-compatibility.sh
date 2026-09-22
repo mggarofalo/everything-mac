@@ -73,8 +73,9 @@ fi
 
 /usr/bin/osascript - "$app_path" <<'APPLESCRIPT'
 on run argv
+    set appBundle to POSIX file (item 1 of argv) as alias
     tell application "Finder"
-        open POSIX file (item 1 of argv)
+        open appBundle
         activate
     end tell
 end run
