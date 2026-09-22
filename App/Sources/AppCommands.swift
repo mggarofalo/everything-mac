@@ -28,6 +28,9 @@ struct AppCommands: Commands {
             Button("Open") { if let r = model.selected { ResultActions.open(r) } }
                 .keyboardShortcut("o", modifiers: .command)
                 .disabled(model.selected == nil)
+            Button("Quick Look") { if let r = model.selected { model.togglePreview(r) } }
+                .keyboardShortcut("y", modifiers: .command)
+                .disabled(model.selected == nil)
             Button("Reveal in Finder") { if let r = model.selected { ResultActions.reveal(r) } }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
                 .disabled(model.selected == nil)
