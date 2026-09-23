@@ -25,7 +25,9 @@ final class ShortcutsUITests: XCTestCase {
         actionSearch.click()
         actionSearch.typeText("Search EverythingMac")
 
-        let searchAction = editor.staticTexts["Search EverythingMac"].firstMatch
+        let searchAction = editor.buttons[
+            "editor.drawer.action.com.everythingmac.app.SearchEverythingMacIntent"
+        ].firstMatch
         XCTAssertTrue(searchAction.waitForExistence(timeout: 30), shortcuts.debugDescription)
         searchAction.doubleClick()
 
