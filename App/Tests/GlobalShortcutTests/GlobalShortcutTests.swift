@@ -14,6 +14,22 @@ final class GlobalShortcutTests: XCTestCase {
         XCTAssertEqual(fixture.registrar.registeredShortcuts, [])
     }
 
+    func testSavedLetterShortcutDisplaysWhenSettingsReopens() {
+        let fixture = Fixture()
+        let shortcut = GlobalShortcut(
+            keyCode: UInt32(kVK_ANSI_D), modifiers: UInt32(controlKey | shiftKey)
+        )
+        fixture.controller.setShortcut(shortcut)
+
+        let reloaded = fixture.reloadedController(registrar: MockRegistrar())
+        let recorder = ShortcutRecorderView()
+        recorder.shortcut = reloaded.shortcut
+
+        XCTAssertEqual(reloaded.shortcut, shortcut)
+        XCTAssertTrue(recorder.title.hasPrefix("⌃⇧"))
+        XCTAssertGreaterThan(recorder.title.count, 2)
+    }
+
     func testEnableRegistersOnlyOnceAndPersists() {
         let fixture = Fixture()
 
