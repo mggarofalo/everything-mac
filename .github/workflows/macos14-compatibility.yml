@@ -41,6 +41,16 @@ jobs:
             build
       - name: Verify metadata and launch the app
         run: scripts/check-macos14-compatibility.sh "$DERIVED_DATA"
+      - name: Verify Shortcuts discovers the action
+        run: |
+          xcodebuild -project App/EverythingMac.xcodeproj \
+            -scheme EverythingMacShortcutsUITests \
+            -configuration Release \
+            -derivedDataPath "$DERIVED_DATA" \
+            -destination 'platform=macOS' \
+            -parallel-testing-enabled NO \
+            CODE_SIGNING_ALLOWED=NO \
+            test
       - name: Upload compatibility evidence
         if: always()
         uses: actions/upload-artifact@v4

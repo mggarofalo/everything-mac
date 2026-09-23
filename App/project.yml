@@ -7,6 +7,19 @@ packages:
   IndexCore:
     path: ..
 targets:
+  EverythingMacShortcutsUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    sources:
+      - Tests/ShortcutsUITests
+    dependencies:
+      - target: EverythingMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.shortcuts-ui-tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: EverythingMac
+        SWIFT_VERSION: "6.0"
   EverythingMacAdapterTests:
     type: bundle.unit-test
     platform: macOS
