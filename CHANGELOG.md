@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Fix the global shortcut recorder so clicking its displayed combination accepts a new shortcut.
+
 ## 0.10.0
 
 - Preview selected search results with Quick Look using Space, ⌘Y, or the shortcut menu. The preview follows selection changes.

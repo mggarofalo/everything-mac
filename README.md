@@ -81,7 +81,8 @@ Network volumes are not indexed. A slow or unavailable share must not block loca
 Settings > General can enable a global search shortcut. It is off by default and suggests
 Control-Option-Space. EverythingMac registers the chosen physical key combination only while
 the UI app runs; it does not change macOS shortcut settings or request Accessibility or Input
-Monitoring permission. A registration conflict leaves the previous shortcut active.
+Monitoring permission. To choose another combination, click the displayed shortcut, then press
+the new combination. A registration conflict leaves the previous shortcut active.
 
 You can also choose to show an EverythingMac menu-bar entry. The menu opens search, Settings,
 or explicitly quits the UI app. Both optional access points remain available after closing the

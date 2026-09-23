@@ -120,6 +120,36 @@ final class GlobalShortcutTests: XCTestCase {
         XCTAssertTrue(recordings.isEmpty)
     }
 
+    func testClickingRecorderFocusesItForKeyboardInput() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 80),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        let recorder = ShortcutRecorderView(frame: NSRect(x: 20, y: 20, width: 200, height: 30))
+        window.contentView?.addSubview(recorder)
+
+        recorder.performClick(nil)
+
+        XCTAssertTrue(window.firstResponder === recorder)
+        XCTAssertEqual(recorder.title, "Type Shortcut")
+    }
+
+    func testFocusedRecorderCapturesMenuKeyEquivalent() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 80),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        let recorder = ShortcutRecorderView(frame: NSRect(x: 20, y: 20, width: 200, height: 30))
+        window.contentView?.addSubview(recorder)
+        var recordings: [GlobalShortcut] = []
+        recorder.onRecord = { recordings.append($0) }
+        recorder.performClick(nil)
+        let event = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [.command], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "f",
+            charactersIgnoringModifiers: "f", isARepeat: false, keyCode: UInt16(kVK_ANSI_F)
+        ))
+
+        XCTAssertTrue(window.performKeyEquivalent(with: event))
+        XCTAssertEqual(recordings, [GlobalShortcut.from(event: event)])
+    }
+
     func testRestoringTheActiveSuggestionDoesNotReregister() throws {
         let fixture = Fixture()
         fixture.controller.enable()

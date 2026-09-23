@@ -35,20 +35,35 @@ final class ShortcutRecorderView: NSButton {
         setButtonType(.momentaryPushIn)
         bezelStyle = .rounded
         title = shortcut.displayString
+        target = self
+        action = #selector(beginRecording)
         setAccessibilityLabel("Global search shortcut")
         setAccessibilityHelp("Press this button, then press a shortcut. Press Delete to clear it.")
     }
 
     required init?(coder: NSCoder) { nil }
 
+    override var acceptsFirstResponder: Bool { true }
+
+    @objc private func beginRecording() {
+        window?.makeFirstResponder(self)
+    }
+
     override func becomeFirstResponder() -> Bool {
+        guard super.becomeFirstResponder() else { return false }
         title = "Type Shortcut"
-        return super.becomeFirstResponder()
+        return true
     }
 
     override func resignFirstResponder() -> Bool {
         title = shortcut.displayString
         return super.resignFirstResponder()
+    }
+
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard window?.firstResponder === self else { return super.performKeyEquivalent(with: event) }
+        keyDown(with: event)
+        return true
     }
 
     override func keyDown(with event: NSEvent) {
