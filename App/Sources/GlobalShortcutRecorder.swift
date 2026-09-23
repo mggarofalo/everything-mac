@@ -60,6 +60,12 @@ final class ShortcutRecorderView: NSButton {
         return super.resignFirstResponder()
     }
 
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard window?.firstResponder === self else { return super.performKeyEquivalent(with: event) }
+        keyDown(with: event)
+        return true
+    }
+
     override func keyDown(with event: NSEvent) {
         guard !event.isARepeat else { return }
         if event.keyCode == UInt16(kVK_Delete) || event.keyCode == UInt16(kVK_ForwardDelete) {
