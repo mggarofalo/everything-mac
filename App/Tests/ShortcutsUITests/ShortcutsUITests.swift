@@ -31,7 +31,10 @@ final class ShortcutsUITests: XCTestCase {
         XCTAssertTrue(searchAction.waitForExistence(timeout: 30), shortcuts.debugDescription)
         searchAction.doubleClick()
 
-        let queryButton = editor.buttons["Query"].firstMatch
+        let actionCard = editor.descendants(matching: .any)
+            .matching(identifier: "editor.action.com.everythingmac.app.SearchEverythingMacIntent")
+            .firstMatch
+        let queryButton = actionCard.buttons.firstMatch
         XCTAssertTrue(queryButton.waitForExistence(timeout: 10), shortcuts.debugDescription)
         queryButton.click()
 
