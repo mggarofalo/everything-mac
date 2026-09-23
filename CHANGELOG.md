@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Fix a crash when opening Settings after saving a global shortcut with a letter key.
+- Stop recording after one shortcut so Settings keyboard commands work again.
 
 ## 0.10.1
 
