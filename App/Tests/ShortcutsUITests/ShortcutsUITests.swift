@@ -48,5 +48,11 @@ final class ShortcutsUITests: XCTestCase {
             .matching(NSPredicate(format: "label == %@ AND value == %@", "Search", query))
             .firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 30), everythingMac.debugDescription)
+
+        everythingMac.terminate()
+        XCTAssertTrue(everythingMac.wait(for: .notRunning, timeout: 10))
+        shortcuts.activate()
+        editor.buttons["shortcut.button.run"].firstMatch.click()
+        XCTAssertTrue(searchField.waitForExistence(timeout: 30), everythingMac.debugDescription)
     }
 }
