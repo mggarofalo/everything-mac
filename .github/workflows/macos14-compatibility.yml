@@ -41,7 +41,7 @@ jobs:
             build
       - name: Verify metadata and launch the app
         run: scripts/check-macos14-compatibility.sh "$DERIVED_DATA"
-      - name: Verify Shortcuts discovers the action
+      - name: Verify Shortcuts discovers and runs the action
         run: |
           xcodebuild -project App/EverythingMac.xcodeproj \
             -scheme EverythingMacShortcutsUITests \

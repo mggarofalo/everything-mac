@@ -2,16 +2,21 @@ import XCTest
 
 @MainActor
 final class ShortcutsUITests: XCTestCase {
-    func testSearchActionIsDiscoverableInShortcuts() {
+    func testShortcutsFindsAndRunsSearchAction() {
         let everythingMac = XCUIApplication(bundleIdentifier: "com.everythingmac.app")
         everythingMac.launch()
 
         let shortcuts = XCUIApplication(bundleIdentifier: "com.apple.shortcuts")
         shortcuts.launch()
 
+        let addShortcut = shortcuts.buttons["add"].firstMatch
         let newShortcut = shortcuts.buttons["New Shortcut"].firstMatch
-        XCTAssertTrue(newShortcut.waitForExistence(timeout: 20), shortcuts.debugDescription)
-        newShortcut.click()
+        if addShortcut.exists {
+            addShortcut.click()
+        } else {
+            XCTAssertTrue(newShortcut.waitForExistence(timeout: 20), shortcuts.debugDescription)
+            newShortcut.click()
+        }
 
         let actionSearch = shortcuts.searchFields["Search"].firstMatch
         XCTAssertTrue(actionSearch.waitForExistence(timeout: 20), shortcuts.debugDescription)
@@ -20,5 +25,21 @@ final class ShortcutsUITests: XCTestCase {
 
         let searchAction = shortcuts.staticTexts["Search EverythingMac"].firstMatch
         XCTAssertTrue(searchAction.waitForExistence(timeout: 30), shortcuts.debugDescription)
+        searchAction.doubleClick()
+
+        let queryButton = shortcuts.buttons["Query"].firstMatch
+        XCTAssertTrue(queryButton.waitForExistence(timeout: 10), shortcuts.debugDescription)
+        queryButton.click()
+
+        let query = "name:EverythingMacUITest.swift"
+        let queryEditor = shortcuts.textViews.firstMatch
+        XCTAssertTrue(queryEditor.waitForExistence(timeout: 10), shortcuts.debugDescription)
+        queryEditor.typeText(query)
+        shortcuts.buttons["Run"].firstMatch.click()
+
+        let searchField = everythingMac.descendants(matching: .any)
+            .matching(NSPredicate(format: "label == %@ AND value == %@", "Search", query))
+            .firstMatch
+        XCTAssertTrue(searchField.waitForExistence(timeout: 30), everythingMac.debugDescription)
     }
 }
