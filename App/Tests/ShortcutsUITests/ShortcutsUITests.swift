@@ -40,8 +40,9 @@ final class ShortcutsUITests: XCTestCase {
         func setQuery(_ query: String) {
             queryButton.click()
             XCTAssertTrue(queryEditor.waitForExistence(timeout: 10), shortcuts.debugDescription)
-            shortcuts.typeKey("a", modifierFlags: .command)
+            queryEditor.typeKey("a", modifierFlags: .command)
             queryEditor.typeText(query)
+            XCTAssertEqual(queryEditor.value as? String, query)
         }
         func searchField(for query: String) -> XCUIElement {
             everythingMac.descendants(matching: .any)
