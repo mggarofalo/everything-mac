@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Fix a crash when opening Settings after saving a global shortcut with a letter key.
+- Stop recording after one shortcut so Settings keyboard commands work again.
+
 ## 0.10.1
 
 - Fix the global shortcut recorder so clicking its displayed combination accepts a new shortcut.

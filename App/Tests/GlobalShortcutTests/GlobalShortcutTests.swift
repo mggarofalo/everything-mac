@@ -14,6 +14,22 @@ final class GlobalShortcutTests: XCTestCase {
         XCTAssertEqual(fixture.registrar.registeredShortcuts, [])
     }
 
+    func testSavedLetterShortcutDisplaysWhenSettingsReopens() {
+        let fixture = Fixture()
+        let shortcut = GlobalShortcut(
+            keyCode: UInt32(kVK_ANSI_D), modifiers: UInt32(controlKey | shiftKey)
+        )
+        fixture.controller.setShortcut(shortcut)
+
+        let reloaded = fixture.reloadedController(registrar: MockRegistrar())
+        let recorder = ShortcutRecorderView()
+        recorder.shortcut = reloaded.shortcut
+
+        XCTAssertEqual(reloaded.shortcut, shortcut)
+        XCTAssertTrue(recorder.title.hasPrefix("⌃⇧"))
+        XCTAssertGreaterThan(recorder.title.count, 2)
+    }
+
     func testEnableRegistersOnlyOnceAndPersists() {
         let fixture = Fixture()
 
@@ -106,9 +122,13 @@ final class GlobalShortcutTests: XCTestCase {
     }
 
     func testRecorderIgnoresHeldKeyRepeats() {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 80),
+                              styleMask: [.titled], backing: .buffered, defer: false)
         let recorder = ShortcutRecorderView()
+        window.contentView?.addSubview(recorder)
         var recordings: [GlobalShortcut] = []
         recorder.onRecord = { recordings.append($0) }
+        recorder.performClick(nil)
         let event = try! XCTUnwrap(NSEvent.keyEvent(
             with: .keyDown, location: .zero, modifierFlags: [.control], timestamp: 0,
             windowNumber: 0, context: nil, characters: "a", charactersIgnoringModifiers: "a",
@@ -118,6 +138,7 @@ final class GlobalShortcutTests: XCTestCase {
         recorder.keyDown(with: event)
 
         XCTAssertTrue(recordings.isEmpty)
+        XCTAssertTrue(recorder.isRecording)
     }
 
     func testClickingRecorderFocusesItForKeyboardInput() {
@@ -148,6 +169,38 @@ final class GlobalShortcutTests: XCTestCase {
 
         XCTAssertTrue(window.performKeyEquivalent(with: event))
         XCTAssertEqual(recordings, [GlobalShortcut.from(event: event)])
+        XCTAssertFalse(recorder.isRecording)
+        XCTAssertFalse(window.firstResponder === recorder)
+    }
+
+    func testRecordingOneShortcutRequiresAnotherClickBeforeNext() throws {
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 80),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        let recorder = ShortcutRecorderView(frame: NSRect(x: 20, y: 20, width: 200, height: 30))
+        window.contentView?.addSubview(recorder)
+        var recordings: [GlobalShortcut] = []
+        recorder.onRecord = { recordings.append($0) }
+        recorder.performClick(nil)
+        let first = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [.control, .shift], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "d",
+            charactersIgnoringModifiers: "d", isARepeat: false, keyCode: UInt16(kVK_ANSI_D)
+        ))
+        let close = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown, location: .zero, modifierFlags: [.command], timestamp: 0,
+            windowNumber: window.windowNumber, context: nil, characters: "w",
+            charactersIgnoringModifiers: "w", isARepeat: false, keyCode: UInt16(kVK_ANSI_W)
+        ))
+
+        XCTAssertTrue(recorder.performKeyEquivalent(with: first))
+        XCTAssertFalse(recorder.isRecording)
+        XCTAssertFalse(window.firstResponder === recorder)
+        XCTAssertFalse(recorder.performKeyEquivalent(with: close))
+        XCTAssertEqual(recordings, [GlobalShortcut.from(event: first)])
+
+        recorder.performClick(nil)
+        XCTAssertTrue(recorder.performKeyEquivalent(with: close))
+        XCTAssertEqual(recordings, [GlobalShortcut.from(event: first), GlobalShortcut.from(event: close)])
     }
 
     func testRestoringTheActiveSuggestionDoesNotReregister() throws {
@@ -155,7 +208,11 @@ final class GlobalShortcutTests: XCTestCase {
         fixture.controller.enable()
         fixture.registrar.result = .failure(.conflict)
         let recorder = ShortcutRecorderView()
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 240, height: 80),
+                              styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView?.addSubview(recorder)
         recorder.onRecord = fixture.controller.setShortcut
+        recorder.performClick(nil)
         let event = try XCTUnwrap(NSEvent.keyEvent(
             with: .keyDown, location: .zero, modifierFlags: [.control, .option], timestamp: 0,
             windowNumber: 0, context: nil, characters: " ", charactersIgnoringModifiers: " ",

@@ -73,22 +73,27 @@ private enum KeyboardLayout {
         if keyCode == UInt32(kVK_Tab) { return "Tab" }
         if keyCode == UInt32(kVK_Escape) { return "Escape" }
         guard let source = TISCopyCurrentKeyboardLayoutInputSource()?.takeRetainedValue(),
-              let data = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
-                .assumingMemoryBound(to: CFData.self).pointee as CFData?,
-              let bytes = CFDataGetBytePtr(data)
+              let property = TISGetInputSourceProperty(source, kTISPropertyUnicodeKeyLayoutData)
         else { return "Key \(keyCode)" }
-        let layout = UnsafeRawPointer(bytes).assumingMemoryBound(to: UCKeyboardLayout.self)
+        return withExtendedLifetime(source) {
+            // TISGetInputSourceProperty returns the CFData object itself under the Get rule.
+            let data = Unmanaged<CFData>.fromOpaque(property).takeUnretainedValue()
+            guard CFGetTypeID(data) == CFDataGetTypeID(),
+                  let bytes = CFDataGetBytePtr(data)
+            else { return "Key \(keyCode)" }
+            let layout = UnsafeRawPointer(bytes).assumingMemoryBound(to: UCKeyboardLayout.self)
 
-        var deadKeyState: UInt32 = 0
-        var length = 0
-        var characters = [UniChar](repeating: 0, count: 4)
-        let status = UCKeyTranslate(
-            layout, UInt16(keyCode), UInt16(kUCKeyActionDisplay), 0,
-            UInt32(LMGetKbdType()), OptionBits(kUCKeyTranslateNoDeadKeysBit),
-            &deadKeyState, characters.count, &length, &characters
-        )
-        guard status == noErr, length > 0 else { return "Key \(keyCode)" }
-        return String(utf16CodeUnits: characters, count: length).uppercased()
+            var deadKeyState: UInt32 = 0
+            var length = 0
+            var characters = [UniChar](repeating: 0, count: 4)
+            let status = UCKeyTranslate(
+                layout, UInt16(keyCode), UInt16(kUCKeyActionDisplay), 0,
+                UInt32(LMGetKbdType()), OptionBits(kUCKeyTranslateNoDeadKeysBit),
+                &deadKeyState, characters.count, &length, &characters
+            )
+            guard status == noErr, length > 0 else { return "Key \(keyCode)" }
+            return String(utf16CodeUnits: characters, count: length).uppercased()
+        }
     }
 }
 

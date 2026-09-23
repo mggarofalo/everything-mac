@@ -29,6 +29,7 @@ final class ShortcutRecorderView: NSButton {
         didSet { title = shortcut.displayString }
     }
     var onRecord: ((GlobalShortcut) -> Void)?
+    private(set) var isRecording = false
 
     override init(frame frameRect: NSRect) {
         super.init(frame: frameRect)
@@ -38,7 +39,7 @@ final class ShortcutRecorderView: NSButton {
         target = self
         action = #selector(beginRecording)
         setAccessibilityLabel("Global search shortcut")
-        setAccessibilityHelp("Press this button, then press a shortcut. Press Delete to clear it.")
+        setAccessibilityHelp("Click to record one shortcut. Press Delete while recording to clear it.")
     }
 
     required init?(coder: NSCoder) { nil }
@@ -46,32 +47,43 @@ final class ShortcutRecorderView: NSButton {
     override var acceptsFirstResponder: Bool { true }
 
     @objc private func beginRecording() {
+        isRecording = true
         window?.makeFirstResponder(self)
+        title = "Type Shortcut"
     }
 
     override func becomeFirstResponder() -> Bool {
         guard super.becomeFirstResponder() else { return false }
-        title = "Type Shortcut"
+        if isRecording { title = "Type Shortcut" }
         return true
     }
 
     override func resignFirstResponder() -> Bool {
+        isRecording = false
         title = shortcut.displayString
         return super.resignFirstResponder()
     }
 
     override func performKeyEquivalent(with event: NSEvent) -> Bool {
-        guard window?.firstResponder === self else { return super.performKeyEquivalent(with: event) }
+        guard isRecording, window?.firstResponder === self else {
+            return super.performKeyEquivalent(with: event)
+        }
         keyDown(with: event)
         return true
     }
 
     override func keyDown(with event: NSEvent) {
+        guard isRecording else { return super.keyDown(with: event) }
         guard !event.isARepeat else { return }
+        let recordedShortcut: GlobalShortcut
         if event.keyCode == UInt16(kVK_Delete) || event.keyCode == UInt16(kVK_ForwardDelete) {
-            onRecord?(GlobalShortcut.suggested)
-            return
+            recordedShortcut = .suggested
+        } else {
+            recordedShortcut = GlobalShortcut.from(event: event)
         }
-        onRecord?(GlobalShortcut.from(event: event))
+        isRecording = false
+        window?.makeFirstResponder(nil)
+        title = shortcut.displayString
+        onRecord?(recordedShortcut)
     }
 }
