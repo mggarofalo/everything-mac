@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.10.1
 
 - Fix the global shortcut recorder so clicking its displayed combination accepts a new shortcut.
 
