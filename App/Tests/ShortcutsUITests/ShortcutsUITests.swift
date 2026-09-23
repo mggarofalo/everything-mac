@@ -58,6 +58,13 @@ final class ShortcutsUITests: XCTestCase {
         editor.buttons["shortcut.button.run"].firstMatch.click()
         XCTAssertTrue(searchField.waitForExistence(timeout: 30), everythingMac.debugDescription)
 
+        everythingMac.typeKey("h", modifierFlags: .command)
+        XCTAssertTrue(everythingMac.wait(for: .runningBackground, timeout: 10))
+        shortcuts.activate()
+        editor.buttons["shortcut.button.run"].firstMatch.click()
+        XCTAssertTrue(everythingMac.wait(for: .runningForeground, timeout: 15))
+        XCTAssertTrue(searchField.waitForExistence(timeout: 30), everythingMac.debugDescription)
+
         everythingMac.terminate()
         XCTAssertTrue(everythingMac.wait(for: .notRunning, timeout: 10))
         shortcuts.activate()
