@@ -96,9 +96,9 @@ On macOS 26 or later, Spotlight can also offer **Search EverythingMac** as an ac
 Open Spotlight with Command-Space, press Command-3 to narrow to actions, and search for
 **Search EverythingMac**. Select the result labeled **EverythingMac**, fill in its query,
 and run it. This invokes the app; it does not add the private index to Spotlight's file results.
-The action has been observed in Spotlight on macOS 27; Shortcuts execution has been verified
-there. macOS 14 supports the Shortcuts entry point, but its interactive execution has not yet
-been verified in the compatibility runner.
+The action has been observed in Spotlight on macOS 27, where Shortcuts execution was also
+verified in a signed installed build. A macOS 14.8.9 CI runner has verified Shortcuts action
+discovery and execution with a query, both while EverythingMac is running and after termination.
 
 Automation can open a search with the canonical URL form:
 
