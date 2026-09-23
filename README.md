@@ -98,7 +98,8 @@ Open Spotlight with Command-Space, press Command-3 to narrow to actions, and sea
 and run it. This invokes the app; it does not add the private index to Spotlight's file results.
 The action has been observed in Spotlight on macOS 27, where Shortcuts execution was also
 verified in a signed installed build. A macOS 14.8.9 CI runner has verified Shortcuts action
-discovery and execution with a query, both while EverythingMac is running and after termination.
+discovery and query delivery while EverythingMac is running, hidden, has no search window, and
+after it terminates.
 
 Automation can open a search with the canonical URL form:
 
