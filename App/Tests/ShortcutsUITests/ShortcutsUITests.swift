@@ -18,24 +18,26 @@ final class ShortcutsUITests: XCTestCase {
             newShortcut.click()
         }
 
-        let actionSearch = shortcuts.searchFields["Search"].firstMatch
+        let editor = shortcuts.windows["New Shortcut"].firstMatch
+        XCTAssertTrue(editor.waitForExistence(timeout: 10), shortcuts.debugDescription)
+        let actionSearch = editor.searchFields.firstMatch
         XCTAssertTrue(actionSearch.waitForExistence(timeout: 20), shortcuts.debugDescription)
         actionSearch.click()
         actionSearch.typeText("Search EverythingMac")
 
-        let searchAction = shortcuts.staticTexts["Search EverythingMac"].firstMatch
+        let searchAction = editor.staticTexts["Search EverythingMac"].firstMatch
         XCTAssertTrue(searchAction.waitForExistence(timeout: 30), shortcuts.debugDescription)
         searchAction.doubleClick()
 
-        let queryButton = shortcuts.buttons["Query"].firstMatch
+        let queryButton = editor.buttons["Query"].firstMatch
         XCTAssertTrue(queryButton.waitForExistence(timeout: 10), shortcuts.debugDescription)
         queryButton.click()
 
         let query = "name:EverythingMacUITest.swift"
-        let queryEditor = shortcuts.textViews.firstMatch
+        let queryEditor = editor.textViews.firstMatch
         XCTAssertTrue(queryEditor.waitForExistence(timeout: 10), shortcuts.debugDescription)
         queryEditor.typeText(query)
-        shortcuts.buttons["Run"].firstMatch.click()
+        editor.buttons["shortcut.button.run"].firstMatch.click()
 
         let searchField = everythingMac.descendants(matching: .any)
             .matching(NSPredicate(format: "label == %@ AND value == %@", "Search", query))
