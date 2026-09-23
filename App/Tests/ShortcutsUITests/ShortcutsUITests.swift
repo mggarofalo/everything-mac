@@ -49,6 +49,15 @@ final class ShortcutsUITests: XCTestCase {
             .firstMatch
         XCTAssertTrue(searchField.waitForExistence(timeout: 30), everythingMac.debugDescription)
 
+        everythingMac.typeKey("w", modifierFlags: .command)
+        let closedSearchWindow = expectation(
+            for: NSPredicate(format: "exists == false"), evaluatedWith: searchField
+        )
+        wait(for: [closedSearchWindow], timeout: 10)
+        shortcuts.activate()
+        editor.buttons["shortcut.button.run"].firstMatch.click()
+        XCTAssertTrue(searchField.waitForExistence(timeout: 30), everythingMac.debugDescription)
+
         everythingMac.terminate()
         XCTAssertTrue(everythingMac.wait(for: .notRunning, timeout: 10))
         shortcuts.activate()
