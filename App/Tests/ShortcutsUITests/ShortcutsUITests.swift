@@ -43,6 +43,11 @@ final class ShortcutsUITests: XCTestCase {
             queryEditor.typeKey("a", modifierFlags: .command)
             queryEditor.typeText(query)
             XCTAssertEqual(queryEditor.value as? String, query)
+            queryEditor.typeKey(XCUIKeyboardKey.return.rawValue, modifierFlags: [])
+            let committedQuery = actionCard.buttons
+                .matching(NSPredicate(format: "label CONTAINS %@", query))
+                .firstMatch
+            XCTAssertTrue(committedQuery.waitForExistence(timeout: 10), shortcuts.debugDescription)
         }
         func searchField(for query: String) -> XCUIElement {
             everythingMac.descendants(matching: .any)
