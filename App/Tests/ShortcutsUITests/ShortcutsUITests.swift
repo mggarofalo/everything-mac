@@ -36,39 +36,52 @@ final class ShortcutsUITests: XCTestCase {
             .firstMatch
         let queryButton = actionCard.buttons.firstMatch
         XCTAssertTrue(queryButton.waitForExistence(timeout: 10), shortcuts.debugDescription)
-        queryButton.click()
-
-        let query = "name:EverythingMacUITest.swift"
         let queryEditor = editor.textViews.firstMatch
-        XCTAssertTrue(queryEditor.waitForExistence(timeout: 10), shortcuts.debugDescription)
-        queryEditor.typeText(query)
+        func setQuery(_ query: String) {
+            queryButton.click()
+            XCTAssertTrue(queryEditor.waitForExistence(timeout: 10), shortcuts.debugDescription)
+            queryEditor.click()
+            queryEditor.typeKey("a", modifierFlags: .command)
+            queryEditor.typeText(query)
+        }
+        func searchField(for query: String) -> XCUIElement {
+            everythingMac.descendants(matching: .any)
+                .matching(NSPredicate(format: "label == %@ AND value == %@", "Search", query))
+                .firstMatch
+        }
+
+        let initialQuery = "name:EverythingMacUITest.swift"
+        setQuery(initialQuery)
         editor.buttons["shortcut.button.run"].firstMatch.click()
 
-        let searchField = everythingMac.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@ AND value == %@", "Search", query))
-            .firstMatch
-        XCTAssertTrue(searchField.waitForExistence(timeout: 30), everythingMac.debugDescription)
+        XCTAssertTrue(searchField(for: initialQuery).waitForExistence(timeout: 30), everythingMac.debugDescription)
 
         everythingMac.typeKey("w", modifierFlags: .command)
         let closedSearchWindow = expectation(
-            for: NSPredicate(format: "exists == false"), evaluatedWith: searchField
+            for: NSPredicate(format: "exists == false"), evaluatedWith: searchField(for: initialQuery)
         )
         wait(for: [closedSearchWindow], timeout: 10)
         shortcuts.activate()
+        let closedQuery = "name:EverythingMacUITest-Closed.swift"
+        setQuery(closedQuery)
         editor.buttons["shortcut.button.run"].firstMatch.click()
-        XCTAssertTrue(searchField.waitForExistence(timeout: 30), everythingMac.debugDescription)
+        XCTAssertTrue(searchField(for: closedQuery).waitForExistence(timeout: 30), everythingMac.debugDescription)
 
         everythingMac.typeKey("h", modifierFlags: .command)
         XCTAssertTrue(everythingMac.wait(for: .runningBackground, timeout: 10))
         shortcuts.activate()
+        let hiddenQuery = "name:EverythingMacUITest-Hidden.swift"
+        setQuery(hiddenQuery)
         editor.buttons["shortcut.button.run"].firstMatch.click()
         XCTAssertTrue(everythingMac.wait(for: .runningForeground, timeout: 15))
-        XCTAssertTrue(searchField.waitForExistence(timeout: 30), everythingMac.debugDescription)
+        XCTAssertTrue(searchField(for: hiddenQuery).waitForExistence(timeout: 30), everythingMac.debugDescription)
 
         everythingMac.terminate()
         XCTAssertTrue(everythingMac.wait(for: .notRunning, timeout: 10))
         shortcuts.activate()
+        let relaunchedQuery = "name:EverythingMacUITest-Relaunched.swift"
+        setQuery(relaunchedQuery)
         editor.buttons["shortcut.button.run"].firstMatch.click()
-        XCTAssertTrue(searchField.waitForExistence(timeout: 30), everythingMac.debugDescription)
+        XCTAssertTrue(searchField(for: relaunchedQuery).waitForExistence(timeout: 30), everythingMac.debugDescription)
     }
 }
