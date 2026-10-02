@@ -131,11 +131,16 @@ rm -f "$dmg" "$checksum"
 
 stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/everythingmac-dmg.XXXXXX")"
 trap 'rm -rf "$stage_dir"' EXIT
-ditto "$app" "$stage_dir/EverythingMac.app"
-ditto "$repo_dir/LICENSE" "$stage_dir/LICENSE.txt"
-ln -s /Applications "$stage_dir/Applications"
-hdiutil create -volname "EverythingMac $version" -srcfolder "$stage_dir" \
-  -format UDZO -ov "$dmg"
+image_contents="$stage_dir/contents"
+mkdir "$image_contents"
+ditto "$app" "$image_contents/EverythingMac.app"
+ditto "$repo_dir/LICENSE" "$image_contents/LICENSE.txt"
+ln -s /Applications "$image_contents/Applications"
+# Build the filesystem without temporarily mounting it. Folder-image creation
+# can fail with "Resource busy" while filesystem monitors inspect the mount.
+hdiutil makehybrid -hfs -hfs-volume-name "EverythingMac $version" \
+  -o "$stage_dir/release" "$image_contents"
+hdiutil convert "$stage_dir/release.dmg" -format UDZO -o "$dmg"
 codesign --force "${timestamp_option[@]}" --sign "$sign_identity" "$dmg"
 codesign --verify --strict --verbose=2 "$dmg"
 
