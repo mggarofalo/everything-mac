@@ -44,8 +44,7 @@ cat > "$stage/Distribution.xml" <<XML
 XML
 mkdir "$stage/resources"
 python3 "$repo_dir/scripts/render-installer-pages.py" "$stage/resources"
-# Retain the MIT notice as a package resource, without adding an installer step.
-cp "$repo_dir/LICENSE" "$stage/resources/LICENSE.txt"
+# The app payload already contains LICENSE; no installer license page is needed.
 build_product() {
   productbuild --distribution "$stage/Distribution.xml" --package-path "$stage" \
     --resources "$stage/resources" "$@" "$package"
