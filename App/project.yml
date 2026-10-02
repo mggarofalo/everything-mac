@@ -225,6 +225,8 @@ targets:
         excludes: [IndexActor.swift]
       - Shared
       - Assets.xcassets
+      - path: ../LICENSE
+        buildPhase: resources
     info:
       path: Info.plist
       properties:

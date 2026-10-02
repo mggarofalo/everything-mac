@@ -5,6 +5,7 @@
 - Install or upgrade with a signed, notarized package that closes the app and background services automatically, preserves your index and settings, and reopens the app.
 - Add Check for Updates to the application menu and optional automatic checks in General settings, using signed Sparkle feeds and the same installer.
 - Ship universal Apple silicon and Intel builds.
+- Present the MIT license as a readable informational notice without an agreement prompt.
 
 ## 0.10.3
 

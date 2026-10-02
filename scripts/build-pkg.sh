@@ -32,7 +32,7 @@ cat > "$stage/Distribution.xml" <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
   <title>EverythingMac $version</title>
-  <license file="LICENSE.txt" mime-type="text/plain"/>
+  <readme file="License.html" mime-type="text/html"/>
   <welcome file="Welcome.html" mime-type="text/html"/>
   <conclusion file="Conclusion.html" mime-type="text/html"/>
   <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
@@ -44,20 +44,23 @@ cat > "$stage/Distribution.xml" <<XML
 </installer-gui-script>
 XML
 mkdir "$stage/resources"
-cp "$repo_dir/LICENSE" "$stage/resources/LICENSE.txt"
+python3 "$repo_dir/scripts/render-license-notice.py" "$repo_dir/LICENSE" "$stage/resources/License.html"
 cat > "$stage/resources/Welcome.html" <<'HTML'
 <html><body><h2>Install or update EverythingMac</h2><p>The installer will close EverythingMac and its background services, install the new version, and reopen the app.</p><p>Your index and settings are preserved. You do not need to quit anything manually.</p></body></html>
 HTML
 cat > "$stage/resources/Conclusion.html" <<'HTML'
 <html><body><h2>EverythingMac is installed</h2><p>Open EverythingMac from Applications if it has not reopened. On a first installation, enable EverythingMac in System Settings → Privacy &amp; Security → Full Disk Access.</p><p>For future updates, choose EverythingMac → Check for Updates…</p></body></html>
 HTML
-package_signing=()
+build_product() {
+  productbuild --distribution "$stage/Distribution.xml" --package-path "$stage" \
+    --resources "$stage/resources" "$@" "$package"
+}
 if [[ "$mode" == release || "$installer_identity" == "Developer ID Installer:"* ]]; then
-  package_signing=(--sign "$installer_identity" --timestamp)
+  build_product --sign "$installer_identity" --timestamp
+  pkgutil --check-signature "$package"
+else
+  build_product
 fi
-productbuild --distribution "$stage/Distribution.xml" --package-path "$stage" \
-  --resources "$stage/resources" "${package_signing[@]}" "$package"
-if (( ${#package_signing[@]} )); then pkgutil --check-signature "$package"; fi
 if [[ "$mode" == release ]]; then
   xcrun notarytool submit "$package" --keychain-profile "${NOTARY_PROFILE:-everythingmac-notary}" --wait
   xcrun stapler staple "$package"
