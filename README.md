@@ -320,6 +320,6 @@ See [SECURITY.md](SECURITY.md) for the permission model, local-data protections,
 
 ## License
 
-EverythingMac is available under the [MIT License](LICENSE).
+EverythingMac is available under the [MIT License](LICENSE), retaining the original copyright notice from Alejandro Sloan. The installer displays this as an informational notice, without an agreement prompt. The notice is also included in the installed app bundle and DMG.
 
 Its direct, literal search model is inspired by [Everything for Windows](https://www.voidtools.com/).

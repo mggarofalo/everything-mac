@@ -32,7 +32,7 @@ cat > "$stage/Distribution.xml" <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
   <title>EverythingMac $version</title>
-  <license file="LICENSE.txt" mime-type="text/plain"/>
+  <readme file="License.html" mime-type="text/html"/>
   <welcome file="Welcome.html" mime-type="text/html"/>
   <conclusion file="Conclusion.html" mime-type="text/html"/>
   <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
@@ -44,7 +44,7 @@ cat > "$stage/Distribution.xml" <<XML
 </installer-gui-script>
 XML
 mkdir "$stage/resources"
-cp "$repo_dir/LICENSE" "$stage/resources/LICENSE.txt"
+python3 "$repo_dir/scripts/render-license-notice.py" "$repo_dir/LICENSE" "$stage/resources/License.html"
 cat > "$stage/resources/Welcome.html" <<'HTML'
 <html><body><h2>Install or update EverythingMac</h2><p>The installer will close EverythingMac and its background services, install the new version, and reopen the app.</p><p>Your index and settings are preserved. You do not need to quit anything manually.</p></body></html>
 HTML
