@@ -15,7 +15,7 @@ struct GeneralSettingsView: View {
             Section("Updates") {
                 Toggle("Automatically check for updates", isOn: Binding(
                     get: { updater.automaticallyChecksForUpdates },
-                    set: updater.setAutomaticChecks
+                    set: { updater.setAutomaticChecks($0) }
                 ))
                 Button("Check for Updates…", action: updater.checkForUpdates)
                     .disabled(!updater.canCheckForUpdates)
