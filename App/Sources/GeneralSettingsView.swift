@@ -13,6 +13,7 @@ struct GeneralSettingsView: View {
     var body: some View {
         Form {
             Section("Updates") {
+                LabeledContent("Installed version", value: BuildVersion.display)
                 Toggle("Automatically check for updates", isOn: Binding(
                     get: { updater.automaticallyChecksForUpdates },
                     set: { updater.setAutomaticChecks($0) }
