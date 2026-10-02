@@ -10,7 +10,9 @@ EverythingMac supports macOS 14 Sonoma and newer.
 
 ## Install EverythingMac
 
-Open the release DMG and drag `EverythingMac.app` into Applications. Launch the app from Applications so its background services have a stable path.
+Download the signed `.pkg` from the [latest release](https://github.com/mggarofalo/everything-mac/releases/latest), or open the DMG and double-click `Install EverythingMac.pkg`. Follow Installer and enter an administrator password when prompted. The installer closes the running app and background services, replaces the app in Applications, and reopens it. Your index and settings are preserved; there is nothing to quit manually.
+
+From version 0.11.0, choose **EverythingMac > Check for Updates…** to download and install later versions in the app. Enable automatic checks in **Settings > General > Updates** if desired; checks are off by default. Installing an update uses the same signed installer and requires administrator authorization.
 
 The indexing service needs Full Disk Access. In
 `System Settings > Privacy & Security > Full Disk Access`, enable
@@ -265,9 +267,10 @@ A preview DMG exercises the complete packaging flow with the same Developer ID c
 ./scripts/build-dmg.sh --preview
 ```
 
-A public build uses 2 credentials stored in macOS Keychain:
+A public build uses these credentials stored in macOS Keychain:
 
-- A Developer ID Application certificate and its private key.
+- Developer ID Application and Developer ID Installer certificates and their private keys.
+- The EverythingMac Sparkle Ed25519 signing key (Keychain account `everythingmac`).
 - A `notarytool` profile containing an app-specific password.
 
 Create the certificate in the Apple Developer portal using a certificate signing request from Keychain Access. Install the downloaded certificate on the release Mac. Its private key must remain in Keychain and must never be committed or copied into the repository.
@@ -283,18 +286,22 @@ APPLE_ID="you@example.com" DEVELOPER_TEAM_ID="TEAMID" \
 
 Do not put the app-specific password on the command line or in an environment variable. This setup is required once per release Mac, and again when the password or certificate changes.
 
-Build the public artifact from a clean, tagged commit:
+Download the official Sparkle release matching `App/project.yml` from [Sparkle releases](https://github.com/sparkle-project/Sparkle/releases). Set `SPARKLE_BIN_DIR` to its `bin` directory. On a new release Mac, securely migrate the existing EverythingMac Sparkle Keychain key; do not generate a replacement for an already published app.
+
+Build the public artifacts from the clean release commit:
 
 ```bash
-DEVELOPER_TEAM_ID="TEAMID" \
+DEVELOPER_TEAM_ID="TEAMID" SPARKLE_BIN_DIR="/path/to/Sparkle/bin" \
   ./scripts/build-dmg.sh --release
 ```
 
 Set `NOTARY_PROFILE` if the profile is not named `everythingmac-notary`. If Keychain contains more than one valid Developer ID Application identity for the team, set `DEVELOPER_ID` to the exact identity to use.
 
-The script validates both Keychain credentials before building. It signs the services and app, confirms the signing team, and adds the MIT license. It then signs the DMG, notarizes that outer container, staples the ticket, checks it with Gatekeeper, and writes a SHA-256 checksum under `dist/`.
+The script builds a universal app and installer helper for Apple silicon and Intel. It signs embedded components and the app, confirms the signing team, then creates a signed package. Both the package and its enclosing DMG are notarized, stapled, assessed by Gatekeeper, and given SHA-256 files under `dist/`. Set `DEVELOPER_INSTALLER_ID` only if the matching Installer certificate needs disambiguation.
 
-Publish the DMG and checksum on the GitHub Release whose tag matches the application version. Create the release as a draft, attach both files, verify them on another Mac, then publish it. Do not publish preview DMGs.
+The package-only helper validates the incoming app, stages it on the destination volume, stops the old processes, and atomically replaces the bundle with rollback on verification failure. It does not install a permanent privileged helper. The same package handles manual installation and Sparkle updates.
+
+The build also creates `appcast.xml`, signing both the package and feed with the EverythingMac Sparkle key without exporting its private key. Publish the `.pkg`, `.dmg`, both `.sha256` files, and `appcast.xml` on the GitHub Release whose tag matches the application version. The app reads the signed feed from the latest release asset. Prepare and verify all assets in a draft before publishing. Do not publish preview artifacts.
 
 ## Understand the components
 

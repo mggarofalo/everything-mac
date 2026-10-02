@@ -1,0 +1,7 @@
+#!/bin/bash
+set -euo pipefail
+# This package supports the running startup disk only. The helper never accepts
+# an arbitrary privileged destination and never executes the old installed app.
+[[ "${3:-}" == "/" ]] || { echo "Install on the current startup disk." >&2; exit 1; }
+script_dir="$(cd "$(dirname "$0")" && pwd -P)"
+exec "$script_dir/EverythingMacInstaller" "$script_dir/EverythingMac.app"

@@ -33,22 +33,7 @@ APP="$(xcodebuild -project EverythingMac.xcodeproj -scheme EverythingMac \
         -configuration Release -showBuildSettings 2>/dev/null \
         | awk -F' = ' '/ BUILT_PRODUCTS_DIR /{print $2; exit}')/EverythingMac.app"
 
-# Sign every nested executable before resealing the app. The CLI has a distinct
-# identity and never inherits the app/indexer's Full Disk Access identifier.
-for executable_spec in \
-  "EverythingMacIndexingService:com.everythingmac.app" \
-  "EverythingMacSearchService:EverythingMacSearchService" \
-  "everythingmac:com.everythingmac.cli"; do
-  executable_name="${executable_spec%%:*}"
-  executable_identifier="${executable_spec#*:}"
-  codesign --force --options runtime --timestamp=none \
-    --identifier "$executable_identifier" --sign "$SIGN_IDENTITY" \
-    "$APP/Contents/MacOS/$executable_name"
-done
-codesign --force --options runtime --timestamp=none \
-  --entitlements EverythingMac.entitlements --identifier com.everythingmac.app \
-  --sign "$SIGN_IDENTITY" "$APP"
-bash ../scripts/verify-app-signatures.sh "$APP"
+bash ../scripts/sign-app.sh "$APP" "$SIGN_IDENTITY" none
 
 # Deploy as a complete bundle so files removed by a newer build cannot survive a
 # merge-copy. Stage and verify first, then replace the destination as one rename.

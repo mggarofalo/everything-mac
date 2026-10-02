@@ -29,5 +29,19 @@
 	</array>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>SUAllowsAutomaticUpdates</key>
+	<false/>
+	<key>SUEnableAutomaticChecks</key>
+	<false/>
+	<key>SUEnableJavaScript</key>
+	<false/>
+	<key>SUFeedURL</key>
+	<string>https://github.com/mggarofalo/everything-mac/releases/latest/download/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>YGUsXOMmhiDNarvuyCq943urhggDkudFABhteSuePVg=</string>
+	<key>SURequireSignedFeed</key>
+	<true/>
+	<key>SUVerifyUpdateBeforeExtraction</key>
+	<true/>
 </dict>
 </plist>

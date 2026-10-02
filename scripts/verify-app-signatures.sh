@@ -45,3 +45,16 @@ for specification in \
     exit 1
   fi
 done
+
+# Verify the embedded updater and every nested executable under our signing team.
+framework="$app/Contents/Frameworks/Sparkle.framework"
+for relative_path in . Versions/B/Autoupdate Versions/B/Updater.app \
+  Versions/B/XPCServices/Installer.xpc Versions/B/XPCServices/Downloader.xpc; do
+  item="$framework/$relative_path"
+  codesign --verify --strict --verbose=2 "$item"
+  signature="$(codesign -dvv "$item" 2>&1)"
+  grep -Fxq "TeamIdentifier=$app_team" <<<"$signature" || {
+    echo "Unexpected Sparkle signing team: $relative_path" >&2
+    exit 1
+  }
+done

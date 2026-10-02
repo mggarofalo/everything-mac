@@ -3,6 +3,7 @@ import IndexCore
 
 struct GeneralSettingsView: View {
     @EnvironmentObject var model: AppModel
+    @EnvironmentObject private var updater: AppUpdater
     @EnvironmentObject private var shortcut: GlobalShortcutController
     @Binding var showInMenuBar: Bool
     @State private var automationEnabled = false
@@ -11,6 +12,17 @@ struct GeneralSettingsView: View {
     @State private var automationError: String?
     var body: some View {
         Form {
+            Section("Updates") {
+                Toggle("Automatically check for updates", isOn: Binding(
+                    get: { updater.automaticallyChecksForUpdates },
+                    set: { updater.setAutomaticChecks($0) }
+                ))
+                Button("Check for Updates…", action: updater.checkForUpdates)
+                    .disabled(!updater.canCheckForUpdates)
+                Text("Updates use the signed installer and may ask for an administrator password. Your index and settings are preserved.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             Section("Search access") {
                 Toggle("Global search shortcut", isOn: Binding(
                     get: { shortcut.isEnabled },

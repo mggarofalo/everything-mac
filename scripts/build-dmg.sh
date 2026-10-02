@@ -41,6 +41,8 @@ if [[ "$mode" == "preview" ]]; then
   artifact_suffix="-preview"
   timestamp_option=(--timestamp=none)
 else
+  : "${SPARKLE_BIN_DIR:?Set SPARKLE_BIN_DIR to the official Sparkle release bin directory.}"
+  [[ -x "$SPARKLE_BIN_DIR/sign_update" && -x "$SPARKLE_BIN_DIR/generate_keys" ]]
   developer_team_id="${DEVELOPER_TEAM_ID:-}"
   [[ "$developer_team_id" =~ ^[A-Z0-9]{10}$ ]] || {
     echo "DEVELOPER_TEAM_ID must be the 10-character Apple Developer Team ID." >&2
@@ -93,6 +95,7 @@ cd "$app_dir"
 xcodegen generate
 xcodebuild -project EverythingMac.xcodeproj -scheme EverythingMac \
   -configuration Release -derivedDataPath "$build_dir" clean build \
+  ARCHS="arm64 x86_64" ONLY_ACTIVE_ARCH=NO \
   CODE_SIGN_IDENTITY="$sign_identity" \
   CODE_SIGN_INJECT_BASE_ENTITLEMENTS=NO \
   ENABLE_HARDENED_RUNTIME=YES
@@ -102,18 +105,11 @@ xcodebuild -project EverythingMac.xcodeproj -scheme EverythingMac \
   exit 1
 }
 
-# Sign inside out. The explicit identifiers are part of the XPC trust policy.
-codesign --force --options runtime "${timestamp_option[@]}" \
-  --identifier com.everythingmac.app --sign "$sign_identity" "$indexing_service"
-codesign --force --options runtime "${timestamp_option[@]}" \
-  --identifier EverythingMacSearchService --sign "$sign_identity" "$search_service"
-codesign --force --options runtime "${timestamp_option[@]}" \
-  --identifier com.everythingmac.cli --sign "$sign_identity" "$cli"
-codesign --force --options runtime "${timestamp_option[@]}" \
-  --entitlements "$app_dir/EverythingMac.entitlements" \
-  --identifier com.everythingmac.app --sign "$sign_identity" "$app"
-
-bash "$repo_dir/scripts/verify-app-signatures.sh" "$app"
+if [[ "$mode" == "release" ]]; then
+  bash "$repo_dir/scripts/sign-app.sh" "$app" "$sign_identity" timestamp
+else
+  bash "$repo_dir/scripts/sign-app.sh" "$app" "$sign_identity" none
+fi
 if [[ "$mode" == "release" ]]; then
   signed_team="$(codesign -dvv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')"
   [[ "$signed_team" == "$developer_team_id" ]] || {
@@ -129,34 +125,22 @@ dmg="$dist_dir/$artifact_name"
 checksum="$dmg.sha256"
 rm -f "$dmg" "$checksum"
 
+bash "$repo_dir/scripts/build-pkg.sh" "$app" "$build_dir" "$sign_identity" "$mode"
+package="$dist_dir/EverythingMac-${version}${artifact_suffix}.pkg"
+
 stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/everythingmac-dmg.XXXXXX")"
-image_mount="$stage_dir/mount"
-image_mounted=false
-cleanup_image() {
-  if [[ "$image_mounted" == true ]]; then
-    hdiutil detach -force "$image_mount" || return
-  fi
-  rm -rf "$stage_dir"
-}
-trap cleanup_image EXIT
+trap 'rm -rf "$stage_dir"' EXIT
 image_contents="$stage_dir/contents"
 mkdir "$image_contents"
-ditto "$app" "$image_contents/EverythingMac.app"
+ditto "$package" "$image_contents/Install EverythingMac.pkg"
 ditto "$repo_dir/LICENSE" "$image_contents/LICENSE.txt"
-ln -s /Applications "$image_contents/Applications"
+
 # Folder-image creation can fail when another service vetoes its temporary
 # unmount. Build the filesystem first, then manage only our own mount explicitly.
 hdiutil makehybrid -hfs -hfs-volume-name "EverythingMac $version" \
   -o "$stage_dir/release" "$image_contents"
-# makehybrid adds Finder metadata that codesign rejects. Remove it from the
-# writable image and verify the packaged app before compression and notarization.
-mkdir "$image_mount"
-hdiutil attach -readwrite -nobrowse -mountpoint "$image_mount" "$stage_dir/release.dmg"
-image_mounted=true
-xattr -cr "$image_mount/EverythingMac.app"
-bash "$repo_dir/scripts/verify-app-signatures.sh" "$image_mount/EverythingMac.app"
-hdiutil detach -force "$image_mount"
-image_mounted=false
+# The DMG contains only the already signed flat package and license. Hybrid
+# filesystem Finder metadata cannot change the package's signed contents.
 hdiutil convert "$stage_dir/release.dmg" -format UDZO -o "$dmg"
 codesign --force "${timestamp_option[@]}" --sign "$sign_identity" "$dmg"
 codesign --verify --strict --verbose=2 "$dmg"
@@ -179,3 +163,9 @@ else
   echo "Built signed and notarized release: $dmg"
 fi
 echo "SHA-256: $checksum"
+
+if [[ "$mode" == "release" ]]; then
+  : "${SPARKLE_BIN_DIR:?Set SPARKLE_BIN_DIR to the official Sparkle release bin directory.}"
+  python3 "$repo_dir/scripts/build-appcast.py" --app "$app" --package "$package" \
+    --sparkle-bin "$SPARKLE_BIN_DIR"
+fi

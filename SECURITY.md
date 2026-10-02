@@ -10,7 +10,7 @@ Security fixes target the latest release and the current `main` branch. Older bu
 
 ## Data stays local
 
-EverythingMac does not send the index, searches, usage data, or diagnostics to a server. It has no analytics client, updater, or application-owned network service.
+EverythingMac does not send the index, searches, usage data, or diagnostics to a server. It has no analytics client or application-owned network service. The GUI app uses Sparkle to check GitHub Releases for updates when requested, or automatically if the user enables checks. These HTTPS requests expose ordinary connection metadata (including IP address and app/framework version) to GitHub and its download infrastructure, never filenames, queries, or index data. Automatic checks are off by default; Sparkle system-profile submission is not enabled. The indexing and search services do not perform update networking.
 
 The Help menu can ask macOS to open this project’s GitHub pages in the default browser. Opening a result can also launch another application chosen by the user. Those applications have their own security and privacy behavior.
 
@@ -107,13 +107,17 @@ Open, Open With, and Reveal in Finder use macOS workspace APIs. Export writes th
 
 Development and release scripts verify the app and embedded services before installation or distribution.
 
-Local builds require an Apple Development identity. The install script requires hardened runtime, rejects the debug `get-task-allow` entitlement, checks service identifiers, stages a complete replacement bundle, and restores the previous bundle if verification fails.
+Local builds default to a Developer ID Application identity, with an explicit override for development signing. The install script requires hardened runtime, rejects the debug `get-task-allow` entitlement, checks service identifiers, stages a complete replacement bundle, and restores the previous bundle if verification fails.
 
 Public releases require a Developer ID Application identity whose private key remains in macOS Keychain. Notarization uses an app-specific password stored in a separate `notarytool` Keychain profile. Neither credential belongs in the repository, shell history, environment, or GitHub Actions secrets.
 
-The release script validates both Keychain credentials before building. It signs components from the inside out, confirms their signing team, and includes the MIT license. It signs the outer DMG before submitting that container to Apple for notarization, then staples the result, runs Gatekeeper assessment, and writes a SHA-256 checksum. Any failed step stops the release.
+Public packages additionally require a Developer ID Installer certificate. The app embeds a Sparkle Ed25519 public key; the private key remains in Keychain under the `everythingmac` account. Both update packages and the appcast are signed, and the app requires a signed feed and verifies downloads before extraction. Sparkle and its nested executable components are signed with the application's Developer ID team. Any failed signing, notarization, signature verification, or Gatekeeper assessment stops the release.
 
-Preview DMGs use development signing and skip notarization. They are not public release artifacts.
+The signed package contains a temporary installer helper that runs with Installer's administrator authorization. It accepts an incoming application only after validating its bundle identifier and the signatures of the app and its three executables against the helper's signing team. It stages a complete replacement in a private directory on the destination volume before stopping exact executable paths belonging to the installed app. It atomically exchanges the bundles, verifies the installed replacement, and rolls back on verification failure. It never reads or deletes index or preference data and installs no persistent privileged helper. Existing launch-agent approvals are preserved; reopening the app refreshes both service registrations.
+
+The notarized package is distributed directly and inside a separately signed, notarized DMG. Both artifacts have stapled tickets and SHA-256 checksums. Sparkle package updates always require administrator authorization; silent automatic installation is disabled.
+
+Preview installers and DMGs use Developer ID signing by default and skip notarization. They are not public release artifacts.
 
 ## Current limitations
 

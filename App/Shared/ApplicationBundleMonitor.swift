@@ -67,12 +67,9 @@ enum ApplicationBundleMonitor {
 private final class RemovalObserver: @unchecked Sendable {
     private let appURL: URL
     private let parentPID: pid_t
-    private let services = [
-        SMAppService.agent(plistName: "com.everythingmac.indexing-agent.plist"),
-        SMAppService.agent(plistName: "com.everythingmac.indexer.plist"),
-        SMAppService.agent(plistName: "com.everythingmac.indexing-service.plist"),
-        SMAppService.agent(plistName: "com.everythingmac.search.plist"),
-    ]
+    private let services = BackgroundServiceCatalog.all.map {
+        SMAppService.agent(plistName: $0 + ".plist")
+    }
     private let queue = DispatchQueue(label: "com.everythingmac.bundle-monitor")
     private let lock = NSLock()
     private var cleanupScheduled = false
