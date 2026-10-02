@@ -32,7 +32,6 @@ cat > "$stage/Distribution.xml" <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <installer-gui-script minSpecVersion="2">
   <title>EverythingMac $version</title>
-  <readme file="License.html" mime-type="text/html"/>
   <welcome file="Welcome.html" mime-type="text/html"/>
   <conclusion file="Conclusion.html" mime-type="text/html"/>
   <options customize="never" require-scripts="true" rootVolumeOnly="true"/>
@@ -44,13 +43,8 @@ cat > "$stage/Distribution.xml" <<XML
 </installer-gui-script>
 XML
 mkdir "$stage/resources"
-python3 "$repo_dir/scripts/render-license-notice.py" "$repo_dir/LICENSE" "$stage/resources/License.html"
-cat > "$stage/resources/Welcome.html" <<'HTML'
-<html><body><h2>Install or update EverythingMac</h2><p>The installer will close EverythingMac and its background services, install the new version, and reopen the app.</p><p>Your index and settings are preserved. You do not need to quit anything manually.</p></body></html>
-HTML
-cat > "$stage/resources/Conclusion.html" <<'HTML'
-<html><body><h2>EverythingMac is installed</h2><p>Open EverythingMac from Applications if it has not reopened. On a first installation, enable EverythingMac in System Settings → Privacy &amp; Security → Full Disk Access.</p><p>For future updates, choose EverythingMac → Check for Updates…</p></body></html>
-HTML
+python3 "$repo_dir/scripts/render-installer-pages.py" "$stage/resources"
+# The app payload already contains LICENSE; no installer license page is needed.
 build_product() {
   productbuild --distribution "$stage/Distribution.xml" --package-path "$stage" \
     --resources "$stage/resources" "$@" "$package"
