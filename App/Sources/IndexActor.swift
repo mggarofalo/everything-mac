@@ -295,6 +295,7 @@ actor IndexActor {
             pendingDirs.removeAll(keepingCapacity: true)
             pendingDeep.removeAll(keepingCapacity: true)
             pendingMetadata.removeAll(keepingCapacity: true)
+            clearDeferredChanges()
             retryCounts.removeAll(keepingCapacity: true)
             pendingMaxEventID = 0
             pendingFullRescan = false
@@ -412,6 +413,7 @@ actor IndexActor {
         pendingDirs.removeAll()
         pendingDeep.removeAll()
         pendingMetadata.removeAll()
+        clearDeferredChanges()
         retryCounts.removeAll()
         pendingMaxEventID = 0
         pendingFullRescan = false
@@ -465,6 +467,15 @@ actor IndexActor {
     private var pendingMetadata: Set<String> = []
     private var pendingMaxEventID: UInt64 = 0
     private var pendingFullRescan = false
+    // Failed paths have their own timer. Fresh events must not inherit their backoff.
+    private struct DeferredChanges {
+        var directories: [String: Bool] = [:]
+        var metadata: Set<String> = []
+        var eventID: UInt64 = 0
+        var isEmpty: Bool { directories.isEmpty && metadata.isEmpty }
+    }
+    private var deferredChanges = DeferredChanges()
+    private var retryTask: Task<Void, Never>?
     private var retryCounts: [String: Int] = [:]
     private var drainScheduled = false
     private var draining = false
@@ -514,8 +525,7 @@ actor IndexActor {
             if await processDirectories(batch.directories, deep: batch.deep,
                                         state: &state) { return }
             publishChanges(from: state)
-            if scheduleRetryIfNeeded(eventID: batch.eventID, state: state) { return }
-            lastEventID = max(lastEventID, batch.eventID)
+            finishBatch(eventID: batch.eventID, state: state)
             state.resetForNextBatch()
         }
     }
@@ -532,13 +542,11 @@ actor IndexActor {
         var newlyIndexed = Set<String>()
         var structuralChanged = false
         var visibleMetadataChanged = false
-        var retryNeeded = false
         var retryDelay: UInt64 = 1_000_000_000
 
         mutating func resetForNextBatch() {
             structuralChanged = false
             visibleMetadataChanged = false
-            retryNeeded = false
             retryDelay = 1_000_000_000
         }
     }
@@ -565,14 +573,16 @@ actor IndexActor {
         for path in paths {
             switch LiveMonitor.refreshMetadataStatus(path: path, in: &store) {
             case .changed:
+                deferredChanges.metadata.remove(path)
                 retryCounts.removeValue(forKey: "m:" + path)
                 if lastSort == .size || lastSort == .mtime || visibleResultPaths.contains(path) {
                     state.visibleMetadataChanged = true
                 }
             case .retry:
                 recordRetry(for: "m:" + path, state: &state)
-                pendingMetadata.insert(path)
+                deferredChanges.metadata.insert(path)
             case .noChange:
+                deferredChanges.metadata.remove(path)
                 retryCounts.removeValue(forKey: "m:" + path)
             }
         }
@@ -581,7 +591,7 @@ actor IndexActor {
     private func processDirectories(_ directories: [String], deep: Set<String>,
                                     state: inout DrainState) async -> Bool {
         for directory in directories {
-            let descend = deep.contains(directory)
+            let descend = deep.contains(directory) || deferredChanges.directories[directory] == true
             if descend, Self.isVolumeRoot(directory) {
                 await rescanAll()
                 onLiveChange?()
@@ -607,6 +617,7 @@ actor IndexActor {
                                       descend: Bool, state: inout DrainState) {
         switch result {
         case .changed:
+            deferredChanges.directories.removeValue(forKey: path)
             retryCounts.removeValue(forKey: "d:" + path)
             state.structuralChanged = true
         case .retry:
@@ -614,9 +625,9 @@ actor IndexActor {
             // snapshot was detected, so invalidate results while scheduling a retry.
             state.structuralChanged = true
             recordRetry(for: "d:" + path, state: &state)
-            pendingDirs.insert(path)
-            if descend { pendingDeep.insert(path) }
+            deferredChanges.directories[path] = descend || deferredChanges.directories[path] == true
         case .noChange:
+            deferredChanges.directories.removeValue(forKey: path)
             retryCounts.removeValue(forKey: "d:" + path)
         }
     }
@@ -624,7 +635,6 @@ actor IndexActor {
     private func recordRetry(for key: String, state: inout DrainState) {
         let attempts = retryCounts[key, default: 0] + 1
         retryCounts[key] = attempts
-        state.retryNeeded = true
         state.retryDelay = max(state.retryDelay, Self.retryDelay(for: attempts))
     }
 
@@ -635,16 +645,36 @@ actor IndexActor {
         onLiveChange?()
     }
 
-    private func scheduleRetryIfNeeded(eventID: UInt64, state: DrainState) -> Bool {
-        guard state.retryNeeded else { return false }
-        pendingMaxEventID = max(pendingMaxEventID, eventID)
-        drainScheduled = true
-        Task { [weak self, delay = state.retryDelay] in
+    private func finishBatch(eventID: UInt64, state: DrainState) {
+        deferredChanges.eventID = max(deferredChanges.eventID, eventID)
+        if deferredChanges.isEmpty {
+            // Later successful batches cannot advance the durable checkpoint past
+            // an earlier failed inspection. Release that barrier only after recovery.
+            lastEventID = max(lastEventID, deferredChanges.eventID)
+            clearDeferredChanges()
+            return
+        }
+        guard retryTask == nil else { return }
+        retryTask = Task { [weak self, delay = state.retryDelay] in
             try? await Task.sleep(nanoseconds: delay)
             guard !Task.isCancelled else { return }
-            await self?.drainChanges()
+            await self?.retryDeferredChanges()
         }
-        return true
+    }
+
+    private func retryDeferredChanges() {
+        retryTask = nil
+        pendingDirs.formUnion(deferredChanges.directories.keys)
+        pendingDeep.formUnion(deferredChanges.directories.compactMap { $0.value ? $0.key : nil })
+        pendingMetadata.formUnion(deferredChanges.metadata)
+        pendingMaxEventID = max(pendingMaxEventID, deferredChanges.eventID)
+        enqueueChanges([])
+    }
+
+    private func clearDeferredChanges() {
+        retryTask?.cancel()
+        retryTask = nil
+        deferredChanges = DeferredChanges()
     }
 
     private static func retryDelay(for attempt: Int) -> UInt64 {

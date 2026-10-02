@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.10.3
+
+- Keep typed and externally supplied searches responsive during background index rebuilds by searching the last published snapshot.
+- Process fresh filesystem events without waiting for unrelated failed-path retries, while retaining a safe replay checkpoint.
+
 ## 0.10.2
 
 - Fix a crash when opening Settings after saving a global shortcut with a letter key.

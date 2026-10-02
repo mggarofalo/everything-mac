@@ -4,7 +4,7 @@ EverythingMac is a local file-name search app for macOS. It maintains an index o
 
 ![A grouped Boolean search for applications](assets/search-boolean.png)
 
-The app searches local mounted volumes, stays current through FSEvents, and keeps working in the background after you close the search window. It does not rank results or search file contents.
+The app searches local mounted volumes, stays current through FSEvents, and keeps working in the background after you close the search window. Failed filesystem inspections retry separately so they do not hold up updates from unrelated paths. It does not rank results or search file contents.
 
 EverythingMac supports macOS 14 Sonoma and newer.
 
@@ -70,7 +70,7 @@ Regular expressions match names by default. Enable `Match Path` to apply them to
 
 ## Manage the index
 
-Use `File > Rebuild Index` or `Settings > General > Rebuild Index Now` to scan from scratch. A forced rebuild clears the visible results before scanning begins.
+Use `File > Rebuild Index` or `Settings > General > Rebuild Index Now` to scan from scratch. A forced rebuild clears the visible results before scanning begins. Searches submitted while a rebuild runs use the last published index snapshot; newly scanned files become searchable when the replacement snapshot is published.
 
 The Exclude and Volumes settings control which local paths enter the index. Applying either set of changes rebuilds the cache with the new rules. EverythingMac excludes common version-control, dependency, build, and cache directories by default.
 
