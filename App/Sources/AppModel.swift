@@ -202,7 +202,7 @@ final class AppModel: ObservableObject {
                 total = status.totalCount
             }
             rules = await index.currentRules()
-            if !scanning { await runSearch() }
+            await runSearch()
         }
     }
 
@@ -279,7 +279,9 @@ final class AppModel: ObservableObject {
     }
 
     func runSearch() async {
-        guard !scanning else { return }
+        // Background scans publish atomically; the service can search its previous
+        // snapshot while replacement data is being built. Scanning is presentation
+        // state, not a reason to discard a user's search request.
         searchSeq &+= 1
         let mySeq = searchSeq
         let r = await index.search(query, matchPath: matchPath, caseInsensitive: !caseSensitive,

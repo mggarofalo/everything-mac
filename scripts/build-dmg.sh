@@ -130,12 +130,34 @@ checksum="$dmg.sha256"
 rm -f "$dmg" "$checksum"
 
 stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/everythingmac-dmg.XXXXXX")"
-trap 'rm -rf "$stage_dir"' EXIT
-ditto "$app" "$stage_dir/EverythingMac.app"
-ditto "$repo_dir/LICENSE" "$stage_dir/LICENSE.txt"
-ln -s /Applications "$stage_dir/Applications"
-hdiutil create -volname "EverythingMac $version" -srcfolder "$stage_dir" \
-  -format UDZO -ov "$dmg"
+image_mount="$stage_dir/mount"
+image_mounted=false
+cleanup_image() {
+  if [[ "$image_mounted" == true ]]; then
+    hdiutil detach -force "$image_mount" || return
+  fi
+  rm -rf "$stage_dir"
+}
+trap cleanup_image EXIT
+image_contents="$stage_dir/contents"
+mkdir "$image_contents"
+ditto "$app" "$image_contents/EverythingMac.app"
+ditto "$repo_dir/LICENSE" "$image_contents/LICENSE.txt"
+ln -s /Applications "$image_contents/Applications"
+# Folder-image creation can fail when another service vetoes its temporary
+# unmount. Build the filesystem first, then manage only our own mount explicitly.
+hdiutil makehybrid -hfs -hfs-volume-name "EverythingMac $version" \
+  -o "$stage_dir/release" "$image_contents"
+# makehybrid adds Finder metadata that codesign rejects. Remove it from the
+# writable image and verify the packaged app before compression and notarization.
+mkdir "$image_mount"
+hdiutil attach -readwrite -nobrowse -mountpoint "$image_mount" "$stage_dir/release.dmg"
+image_mounted=true
+xattr -cr "$image_mount/EverythingMac.app"
+bash "$repo_dir/scripts/verify-app-signatures.sh" "$image_mount/EverythingMac.app"
+hdiutil detach -force "$image_mount"
+image_mounted=false
+hdiutil convert "$stage_dir/release.dmg" -format UDZO -o "$dmg"
 codesign --force "${timestamp_option[@]}" --sign "$sign_identity" "$dmg"
 codesign --verify --strict --verbose=2 "$dmg"
 

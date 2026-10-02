@@ -2,6 +2,7 @@ import Foundation
 import IndexCore
 
 actor SearchClient {
+    private let requestTransport: (@Sendable (Data) async throws -> Data)?
     private var connection: NSXPCConnection?
     private var connectionRevision: UInt64 = 0
     private var onLiveChange: (@Sendable () -> Void)?
@@ -9,7 +10,8 @@ actor SearchClient {
     private nonisolated(unsafe) var notificationToken: NSObjectProtocol?
     private nonisolated(unsafe) var progressNotificationToken: NSObjectProtocol?
 
-    init() {
+    init(requestTransport: (@Sendable (Data) async throws -> Data)? = nil) {
+        self.requestTransport = requestTransport
         notificationToken = DistributedNotificationCenter.default().addObserver(
             forName: indexChangedNotification, object: nil, queue: nil
         ) { [weak self] _ in
@@ -112,6 +114,27 @@ actor SearchClient {
                                                    payload: P?, as type: R.Type) async throws -> R {
         let payloadData = try payload.map { try JSONEncoder().encode($0) }
         let request = try JSONEncoder().encode(ServiceRequest(operation: operation, payload: payloadData))
+        let (replyData, requestConnectionRevision) = try await send(request, operation: operation)
+        let envelope = try JSONDecoder().decode(ServiceReply.self, from: replyData)
+        if let error = envelope.error {
+            if envelope.errorCode == .serviceUnavailable,
+               operation != .ping, connectionRevision == requestConnectionRevision {
+                resetConnection()
+            }
+            throw NSError(domain: "EverythingMac", code: 3,
+                          userInfo: [NSLocalizedDescriptionKey: error])
+        }
+        guard let payload = envelope.payload else {
+            throw NSError(domain: "EverythingMac", code: 4,
+                          userInfo: [NSLocalizedDescriptionKey: "Empty service response"])
+        }
+        return try JSONDecoder().decode(type, from: payload)
+    }
+
+    /// Keep wire transport separate from request encoding and reply interpretation.
+    /// Scoped clients can supply a transport without registering system services.
+    private func send(_ request: Data, operation: ServiceOperation) async throws -> (Data, UInt64) {
+        if let requestTransport { return (try await requestTransport(request), connectionRevision) }
         // The app delegate registers the launch agents during application launch.
         // Connect only when the first request is made so a brand-new installation
         // cannot permanently capture an unavailable service before registration.
@@ -153,20 +176,7 @@ actor SearchClient {
             }
             throw error
         }
-        let envelope = try JSONDecoder().decode(ServiceReply.self, from: replyData)
-        if let error = envelope.error {
-            if envelope.errorCode == .serviceUnavailable,
-               operation != .ping, connectionRevision == requestConnectionRevision {
-                resetConnection()
-            }
-            throw NSError(domain: "EverythingMac", code: 3,
-                          userInfo: [NSLocalizedDescriptionKey: error])
-        }
-        guard let payload = envelope.payload else {
-            throw NSError(domain: "EverythingMac", code: 4,
-                          userInfo: [NSLocalizedDescriptionKey: "Empty service response"])
-        }
-        return try JSONDecoder().decode(type, from: payload)
+        return (replyData, requestConnectionRevision)
     }
 
     private func activeConnection() -> NSXPCConnection {
