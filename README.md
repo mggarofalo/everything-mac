@@ -12,7 +12,7 @@ EverythingMac supports macOS 14 Sonoma and newer.
 
 Download the signed `.pkg` from the [latest release](https://github.com/mggarofalo/everything-mac/releases/latest), or open the DMG and double-click `Install EverythingMac.pkg`. Follow Installer and enter an administrator password when prompted. The installer closes the running app and background services, replaces the app in Applications, and reopens it. Your index and settings are preserved; there is nothing to quit manually.
 
-From version 0.11.0, choose **EverythingMac > Check for Updates…** to download and install later versions in the app. Enable automatic checks in **Settings > General > Updates** if desired; checks are off by default. Installing an update uses the same signed installer and requires administrator authorization.
+From version 0.11.0, choose **EverythingMac > Check for Updates…** to download and install later versions in the app. Enable automatic checks in **Settings > General > Updates** if desired; checks are off by default. Installing an update uses the same signed installer and requires administrator authorization. The Updates section also shows the installed version and source revision.
 
 The indexing service needs Full Disk Access. In
 `System Settings > Privacy & Security > Full Disk Access`, enable

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.11.1
+
+- Show the installed version and source revision in Settings > General > Updates so you can confirm an update completed.
+
 ## 0.11.0
 
 - Install or upgrade with a signed, notarized package that closes the app and background services automatically, preserves your index and settings, and reopens the app.
