@@ -51,13 +51,16 @@ HTML
 cat > "$stage/resources/Conclusion.html" <<'HTML'
 <html><body><h2>EverythingMac is installed</h2><p>Open EverythingMac from Applications if it has not reopened. On a first installation, enable EverythingMac in System Settings → Privacy &amp; Security → Full Disk Access.</p><p>For future updates, choose EverythingMac → Check for Updates…</p></body></html>
 HTML
-package_signing=()
+build_product() {
+  productbuild --distribution "$stage/Distribution.xml" --package-path "$stage" \
+    --resources "$stage/resources" "$@" "$package"
+}
 if [[ "$mode" == release || "$installer_identity" == "Developer ID Installer:"* ]]; then
-  package_signing=(--sign "$installer_identity" --timestamp)
+  build_product --sign "$installer_identity" --timestamp
+  pkgutil --check-signature "$package"
+else
+  build_product
 fi
-productbuild --distribution "$stage/Distribution.xml" --package-path "$stage" \
-  --resources "$stage/resources" "${package_signing[@]}" "$package"
-if (( ${#package_signing[@]} )); then pkgutil --check-signature "$package"; fi
 if [[ "$mode" == release ]]; then
   xcrun notarytool submit "$package" --keychain-profile "${NOTARY_PROFILE:-everythingmac-notary}" --wait
   xcrun stapler staple "$package"
