@@ -104,3 +104,16 @@ xcodebuild -project App/EverythingMac.xcodeproj \
   -configuration Debug \
   CODE_SIGNING_ALLOWED=NO \
   test
+
+echo "Running installer replacement tests..."
+xcodebuild -project App/EverythingMac.xcodeproj \
+  -scheme EverythingMacInstallerTests \
+  -configuration Debug \
+  CODE_SIGNING_ALLOWED=NO \
+  test
+
+xcodebuild -project App/EverythingMac.xcodeproj \
+  -scheme EverythingMacInstaller \
+  -configuration Release \
+  CODE_SIGNING_ALLOWED=NO \
+  build

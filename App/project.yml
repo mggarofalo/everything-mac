@@ -4,9 +4,40 @@ options:
   deploymentTarget:
     macOS: "14.0"
 packages:
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    exactVersion: 2.10.0
   IndexCore:
     path: ..
 targets:
+  EverythingMacInstaller:
+    type: tool
+    platform: macOS
+    sources:
+      - InstallerSources
+      - Shared/BackgroundServiceCatalog.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.installer
+        PRODUCT_NAME: EverythingMacInstaller
+        SKIP_INSTALL: YES
+        SWIFT_VERSION: "6.0"
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        ENABLE_HARDENED_RUNTIME: YES
+  EverythingMacInstallerTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - path: InstallerSources
+        excludes: [InstallerMain.swift]
+      - Shared/BackgroundServiceCatalog.swift
+      - Tests/InstallerTests
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.installer-tests
+        GENERATE_INFOPLIST_FILE: YES
+        SWIFT_VERSION: "6.0"
   EverythingMacShortcutsUITests:
     type: bundle.ui-testing
     platform: macOS
@@ -162,8 +193,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.app
         PRODUCT_NAME: EverythingMacIndexingService
-        MARKETING_VERSION: "0.10.3"
-        CURRENT_PROJECT_VERSION: "28"
+        MARKETING_VERSION: "0.11.0"
+        CURRENT_PROJECT_VERSION: "29"
         SKIP_INSTALL: YES
         SWIFT_VERSION: "6.0"
         CODE_SIGN_STYLE: Manual
@@ -199,12 +230,20 @@ targets:
       properties:
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        SUFeedURL: https://github.com/mggarofalo/everything-mac/releases/latest/download/appcast.xml
+        SUPublicEDKey: "YGUsXOMmhiDNarvuyCq943urhggDkudFABhteSuePVg="
+        SUVerifyUpdateBeforeExtraction: true
+        SURequireSignedFeed: true
+        SUEnableAutomaticChecks: false
+        SUAllowsAutomaticUpdates: false
+        SUEnableJavaScript: false
         CFBundleURLTypes:
           - CFBundleURLName: com.everythingmac.search
             CFBundleURLSchemes: [everythingmac]
     entitlements:
       path: EverythingMac.entitlements
     dependencies:
+      - package: Sparkle
       - package: IndexCore
       - target: EverythingMacIndexingService
         embed: false
@@ -251,8 +290,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.everythingmac.app
         EXECUTABLE_NAME: EverythingMacApp
-        MARKETING_VERSION: "0.10.3"
-        CURRENT_PROJECT_VERSION: "28"
+        MARKETING_VERSION: "0.11.0"
+        CURRENT_PROJECT_VERSION: "29"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_ENTITLEMENTS: EverythingMac.entitlements
         SWIFT_VERSION: "6.0"

@@ -4,6 +4,7 @@ import AppKit
 @main
 struct EverythingMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
+    @StateObject private var updater = AppUpdater()
     @StateObject private var model: AppModel
     @StateObject private var presentation: SearchPresentationCoordinator
     @StateObject private var presentationHost: SearchPresentationHost
@@ -48,9 +49,10 @@ struct EverythingMacApp: App {
                 .handlesExternalEvents(preferring: ["*"], allowing: ["*"])
         }
         .handlesExternalEvents(matching: ["*"])
-        .commands { AppCommands(model: model) }
+        .commands { AppCommands(model: model, updater: updater) }
         Settings {
             SettingsView(showInMenuBar: menuBarVisibility)
+                .environmentObject(updater)
                 .environmentObject(model)
                 .environmentObject(presentation)
                 .environmentObject(presentationHost)

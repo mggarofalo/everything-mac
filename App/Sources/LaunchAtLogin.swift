@@ -19,10 +19,9 @@ import ServiceManagement
     private static let registrationRevision = 6
     private static let registeredBundleKey = "services.registeredBundleIdentity"
     private static let registrationRevisionKey = "services.registrationRevision"
-    private static let services = [
-        SMAppService.agent(plistName: "com.everythingmac.indexing-agent.plist"),
-        SMAppService.agent(plistName: "com.everythingmac.search.plist"),
-    ]
+    private static let services = BackgroundServiceCatalog.current.map {
+        SMAppService.agent(plistName: $0 + ".plist")
+    }
 
     static var areEnabled: Bool { services.allSatisfy { $0.status == .enabled } }
     static var availability: Availability {
@@ -47,10 +46,9 @@ import ServiceManagement
     static func install() {
         let legacyMain = SMAppService.mainApp
         let legacyHelper = SMAppService.loginItem(identifier: "com.everythingmac.loginhelper")
-        let obsoleteIndexers = [
-            SMAppService.agent(plistName: "com.everythingmac.indexer.plist"),
-            SMAppService.agent(plistName: "com.everythingmac.indexing-service.plist"),
-        ]
+        let obsoleteIndexers = BackgroundServiceCatalog.retired.map {
+            SMAppService.agent(plistName: $0 + ".plist")
+        }
         try? legacyMain.unregister()
         try? legacyHelper.unregister()
         for obsoleteIndexer in obsoleteIndexers {

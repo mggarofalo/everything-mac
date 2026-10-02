@@ -40,15 +40,15 @@ prefer a release branch and pull request when direct pushes to the default branc
 are not the established path. Wait for required CI and merge before tagging.
 
 Create an annotated `v<version>` tag at the merged release commit and push that
-exact tag. Create the GitHub release from it, attach the notarized DMG and its
-SHA-256 file, and use the matching changelog section for concise release notes.
+exact tag. Create the GitHub release from it, attach the notarized package and DMG, both
+SHA-256 files, and the signed appcast.xml, and use the matching changelog section for concise release notes.
 Verify the remote tag, GitHub release, assets, and checksum before declaring the
 release complete.
 
 ## Install locally
 
-Only when the user explicitly requests an installed test, run
-`./scripts/build-dev.sh`. It replaces `/Applications/EverythingMac.app` and
+Only when the user explicitly requests an installed test, use the signed package
+for installer changes; otherwise run `./scripts/build-dev.sh`. It replaces `/Applications/EverythingMac.app` and
 restarts registered services without deleting the index cache. Verify the
 installed bundle version, signatures, and both `launchctl` jobs. Do not use
 `scripts/relaunch.sh` unless a cache-destructive rebuild was separately requested.

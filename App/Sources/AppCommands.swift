@@ -8,6 +8,7 @@ import IndexCore
 // is selected so the menu reflects what's actually actionable.
 struct AppCommands: Commands {
     @ObservedObject var model: AppModel
+    @ObservedObject var updater: AppUpdater
 
     private var sortBinding: Binding<QueryEngine.SortKey> {
         Binding(get: { model.sortKey },
@@ -21,6 +22,10 @@ struct AppCommands: Commands {
                     .version: ""
                 ])
             }
+        }
+        CommandGroup(after: .appInfo) {
+            Button("Check for Updates…", action: updater.checkForUpdates)
+                .disabled(!updater.canCheckForUpdates)
         }
         // FILE — act on the selected result, plus index/export actions.
         CommandGroup(after: .newItem) {
