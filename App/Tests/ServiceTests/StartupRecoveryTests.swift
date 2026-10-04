@@ -22,7 +22,7 @@ private final class DelayedStatusForwarder: @unchecked Sendable {
     func completeStatus() {
         lock.lock(); let callback = statusCallback; lock.unlock()
         let status = ServiceStatus(totalCount: 12, revision: 1, scanning: false,
-                                   hasFullDiskAccess: true)
+                                   accessAvailable: true)
         callback?((try? JSONEncoder().encode(ServiceReply.success(status))) ?? Data())
     }
 

@@ -45,7 +45,7 @@ struct AppCommands: Commands {
                 .disabled(model.results.isEmpty)
             Button(model.scanning ? "Rebuilding Index…" : "Rebuild Index") { model.rebuildIndex() }
                 .keyboardShortcut("r", modifiers: [.command, .option])
-                .disabled(model.scanning || !model.hasFullDiskAccess)
+                .disabled(model.scanning || !model.accessAvailable)
             Divider()
             // No keyboard shortcut on purpose: ⌘⌫ is "delete to start of line" while
             // the search field is focused, so binding it here would risk trashing a

@@ -91,7 +91,7 @@ struct GeneralSettingsView: View {
                     LabeledContent("Cache", value: "not written yet")
                 }
                 Button(model.scanning ? "Rebuilding…" : "Rebuild Index Now") { model.rebuildIndex() }
-                    .disabled(model.scanning || !model.hasFullDiskAccess)
+                    .disabled(model.scanning || !model.accessAvailable)
             }
         }
         .formStyle(.grouped)

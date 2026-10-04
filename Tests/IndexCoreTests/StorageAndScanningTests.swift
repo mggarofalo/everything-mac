@@ -233,9 +233,10 @@ final class IndexCacheFailureTests: XCTestCase {
         try Data("not a cache".utf8).write(to: badMagic)
         XCTAssertThrowsError(try IndexCache.load(from: badMagic))
         let badStore = root.appendingPathComponent("bad-store")
-        var header = Data("EMC3".utf8)
+        var header = Data("EMC4".utf8)
         header.append(Data(repeating: 0, count: 16))
-        header.append(Data("BAD!".utf8))
+        header.append(contentsOf: [2, 0, 0, 0])
+        header.append(Data("[]BAD!".utf8))
         try header.write(to: badStore)
         XCTAssertThrowsError(try IndexCache.load(from: badStore))
     }

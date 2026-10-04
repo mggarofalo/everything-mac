@@ -1,6 +1,6 @@
 # Security
 
-EverythingMac indexes filenames and filesystem metadata across local volumes. This requires broad filesystem access, so the project separates indexing from the UI and keeps index data on the Mac.
+EverythingMac indexes filenames and filesystem metadata in selected folders or accessible local volumes. New installations require explicit folder selection. The project separates indexing from the UI and keeps index data on the Mac.
 
 ## Report a vulnerability
 
@@ -31,7 +31,13 @@ Only `EverythingMacIndexingService` uses Full Disk Access. The main app and
 indexer intentionally shares the app's `com.everythingmac.app` signing
 identifier so one visible EverythingMac grant covers the product.
 
-The indexer checks access before loading or building the index. macOS enforces access to protected paths. Revoking Full Disk Access stops future protected filesystem reads, but it does not erase metadata already stored in the cache. Remove the app to run automatic cleanup, or delete the cache manually.
+The indexer uses actual filesystem operations to determine access, never probes the TCC database, and does not infer a system-wide Full Disk Access state from one protected file. macOS may deny individual app containers even with Full Disk Access. Coverage and monitoring status describe observed operations; they are not proof of complete access or an instantaneous revocation notification.
+
+The native folder picker creates implicit bookmarks for transfer through the trusted forwarding service. The indexer validates each local directory and creates its own durable, read-only security-scoped bookmark. Grants are stored in `scope.json` and activated in the indexer; bookmarks are never returned to search clients. Root paths and device/inode identities must still match when a grant resolves. Moved or replaced roots require reselection. Network mounts are classified before directory inspection.
+
+One scope governs scans, live reconciliation, user-folder sweeps, queries, and cache compatibility. Narrowing scope clears the previous snapshot and cache and fences in-flight scans, searches, and staged cache writes. Observed access denial suppresses the affected subtree and invalidates work that could publish its older metadata. Recovery information survives cache reload. Previously delivered output cannot be recalled, and metadata may remain until a filesystem operation observes revocation. Removing a folder from scope does not revoke an existing macOS Full Disk Access grant; change that grant in System Settings.
+
+Selected-folder streams watch contents without FSEvents' optional ancestor root-watch flag. The indexer separately checks root identity during grant refresh, avoiding inspection of protected ancestors outside a selected grant. FSEvents continues delivering changes with the UI closed; dropped history triggers a rebuild. A failed stream is reported and retried, rather than presented as a live static index.
 
 ## The cache is private to the user account
 
@@ -41,11 +47,11 @@ EverythingMac stores its cache at:
 ~/Library/Application Support/EverythingMac/index.idx
 ```
 
-The application-support directory uses POSIX mode `0700`. The cache uses mode `0600`. These permissions prevent other local user accounts from reading the index through normal filesystem access.
+The application-support directory uses POSIX mode `0700`. The cache and durable grant file use mode `0600`. These permissions prevent other local user accounts from reading the index through normal filesystem access.
 
 The cache is not encrypted. Processes running as the same user, software with equivalent filesystem access, and administrators may still read it. FileVault is the appropriate control for data at rest when the Mac is shut down.
 
-Cache writes use a staging file and replacement. The cache records the active exclusion-rule fingerprint and its processed FSEvents checkpoint. EverythingMac rebuilds data with an incompatible format or rule set instead of trusting it.
+Cache writes use a staging file and replacement. The cache records the active scope, root-identity and exclusion-rule fingerprint, its processed FSEvents checkpoint, and unavailable-path recovery information. EverythingMac rebuilds data with an incompatible format or rule set instead of trusting it.
 
 Moving the application bundle out of Applications triggers a separate removal observer. The observer unregisters both background services and deletes the application-support directory. It distinguishes removal from an in-place upgrade so an update does not destroy the index.
 
@@ -70,7 +76,7 @@ exclusive to the indexer.
 The search service accepts `com.everythingmac.app` and the separately identified
 `com.everythingmac.cli` command-line client. The signed client identity, not a
 request field, determines its role. CLI sessions may request status, search, and
-cancellation of their own searches; rebuilds, exclusion-rule changes, and
+cancellation of their own searches; rebuilds, scope and exclusion-rule changes, and
 automation-setting changes require an app session. The indexer accepts
 `EverythingMacSearchService` and shares `com.everythingmac.app` with the main
 application for Full Disk Access. Changes to these signing identifiers must

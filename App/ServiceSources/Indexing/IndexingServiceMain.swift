@@ -3,6 +3,7 @@ import IndexCore
 
 private final class IndexService: @unchecked Sendable {
     private let index = IndexActor()
+    private let access = IndexAccess()
     let admission = SearchAdmission()
     private var generation: UInt64 = 1
     private let startLock = NSLock()
@@ -15,13 +16,13 @@ private final class IndexService: @unchecked Sendable {
     }
 
     fileprivate func ensureStarted() {
-        guard FullDiskAccess.isGranted() else { return }
         startLock.lock()
         guard !didStart else { startLock.unlock(); return }
         didStart = true
         startLock.unlock()
         let generation = generation
         Task {
+            await index.configureAccess(await access.resolve())
             let changed: @Sendable () -> Void = {
                 DistributedNotificationCenter.default().post(name: indexChangedNotification,
                                                              object: nil)
@@ -42,13 +43,19 @@ private final class IndexService: @unchecked Sendable {
     private func installMaintenanceTimers(generation: UInt64) {
         let cache = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
         cache.schedule(deadline: .now() + .seconds(600), repeating: .seconds(600))
-        cache.setEventHandler { [index] in Task { await index.flush(accessGeneration: generation) } }
+        cache.setEventHandler { [index] in Task { await index.flush() } }
         cache.resume()
         cacheTimer = cache
 
         let folders = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
         folders.schedule(deadline: .now() + .seconds(2), repeating: .seconds(2))
-        folders.setEventHandler { [index] in Task { await index.sweepUserFolders() } }
+        folders.setEventHandler { [self] in
+            Task {
+                await index.configureAccess(await access.resolve())
+                await index.refreshUnavailablePaths()
+                await index.sweepUserFolders()
+            }
+        }
         folders.resume()
         userFolderTimer = folders
     }
@@ -56,7 +63,7 @@ private final class IndexService: @unchecked Sendable {
     func handle(_ request: ServiceRequest, token: SearchCancellationToken?) async throws -> ServiceReply {
         switch request.operation {
         case .status:
-            let status = await index.serviceStatus(hasFullDiskAccess: FullDiskAccess.isGranted())
+            let status = await index.serviceStatus()
             return .success(status)
         case .ping:
             return .success(true)
@@ -66,18 +73,25 @@ private final class IndexService: @unchecked Sendable {
             // Handled synchronously by perform(), before creating this task.
             return .success(true)
         case .rebuild:
-            await index.rescanAll(accessGeneration: generation)
-            await index.flush(accessGeneration: generation)
+            await index.configureAccess(await access.resolve())
+            await index.rescanAll()
+            await index.flush()
             return .success(true)
         case .getRules:
             return .success(await index.currentRules())
         case .setRules:
             let payload = try requirePayload(request)
             let rules = try JSONDecoder().decode(ExcludeRules.self, from: payload)
-            await index.setRules(rules, accessGeneration: generation)
-            await index.rescanAll(accessGeneration: generation)
-            await index.flush(accessGeneration: generation)
+            await index.setRules(rules)
+            await index.rescanAll()
+            await index.flush()
             return .success(true)
+        case .getScope:
+            return .success(await access.settings())
+        case .setScope:
+            let update = try JSONDecoder().decode(IndexScopeUpdate.self, from: requirePayload(request))
+            await index.configureAccess(try await access.update(update))
+            return .success(await access.settings())
         case .getAutomationAccess, .setAutomationAccess:
             return .failure(ServiceErrorCode.permissionDenied.message, code: .permissionDenied)
         }
@@ -85,9 +99,7 @@ private final class IndexService: @unchecked Sendable {
 
     private func handleSearch(_ request: ServiceRequest,
                               token: SearchCancellationToken?) async throws -> ServiceReply {
-        guard FullDiskAccess.isGranted() else {
-            return .failure(ServiceErrorCode.permissionDenied.message, code: .permissionDenied)
-        }
+        await index.configureAccess(await access.resolve())
         let payload = try requirePayload(request)
         let query = try JSONDecoder().decode(SearchRequest.self, from: payload)
         guard let token else { return .failure("Missing search token") }

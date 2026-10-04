@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.12.0
+
+- Start new installations with selected folders. Add or remove folders in Settings > Scope, or explicitly choose all accessible local volumes. Existing whole-volume installations retain their scope.
+- Keep FSEvents updates running after the app closes and replay changes after restarting, using durable folder grants owned by the indexer.
+- Replace Full Disk Access database probes with real filesystem access checks. Show unavailable paths and monitoring failures without blocking searches in accessible folders.
+- Remove excluded or inaccessible paths from results and fence older searches and cache writes when scope or observed access changes. Preserve permission recovery across restarts.
+
 ## 0.11.1
 
 - Show the installed version and source revision in Settings > General > Updates so you can confirm an update completed.

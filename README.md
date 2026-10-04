@@ -4,7 +4,7 @@ EverythingMac is a local file-name search app for macOS. It maintains an index o
 
 ![A grouped Boolean search for applications](assets/search-boolean.png)
 
-The app searches local mounted volumes, stays current through FSEvents, and keeps working in the background after you close the search window. Failed filesystem inspections retry separately so they do not hold up updates from unrelated paths. It does not rank results or search file contents.
+The app searches selected folders or accessible local mounted volumes, stays current through FSEvents, and keeps working in the background after you close the search window. Failed filesystem inspections retry separately so they do not hold up updates from unrelated paths. It does not rank results or search file contents.
 
 EverythingMac supports macOS 14 Sonoma and newer.
 
@@ -14,16 +14,15 @@ Download the signed `.pkg` from the [latest release](https://github.com/mggarofa
 
 From version 0.11.0, choose **EverythingMac > Check for Updates…** to download and install later versions in the app. Enable automatic checks in **Settings > General > Updates** if desired; checks are off by default. Installing an update uses the same signed installer and requires administrator authorization. The Updates section also shows the installed version and source revision.
 
-The indexing service needs Full Disk Access. In
-`System Settings > Privacy & Security > Full Disk Access`, enable
-`EverythingMac`. The indexing and search services are covered by that single
-application entry and do not appear as separate items. When you return to
-EverythingMac, it refreshes both background services so the new permission
-takes effect.
+New installations start with **selected folders**. Choose **Choose Folders…** in the search window, or **Add Folders…** in **Settings > Scope**. The native folder picker transfers access to the indexing service, which saves its own read-only grant. Ordinary selected folders do not require Full Disk Access. The service continues watching those folders after you quit the app and replays filesystem changes after restarting.
+
+In **Settings > Scope**, remove folders to trim both search results and filesystem inspection, or explicitly choose **Index All Local Volumes…**. Upgrades with an existing index retain their previous whole-volume scope. macOS controls which protected paths can be read in either mode; selecting a folder or granting Full Disk Access does not guarantee access to every application's private data.
+
+For broader protected-path access, enable `EverythingMac` in **System Settings > Privacy & Security > Full Disk Access**. The indexer shares the application's signing identifier; the forwarding search service does not inspect files. EverythingMac does not read the macOS permissions database. Scope settings show actual unavailable paths and whether live monitoring is active. Access-denied paths are removed when an inspection observes the denial, and retried after access becomes available. Reselect moved or replaced root folders. Network volumes are excluded.
 
 EverythingMac refreshes both background-service registrations after an app replacement, preserving the saved index. Startup status requests check whether the indexer is responsive before triggering recovery, so a long search can finish without a service restart. An unresponsive service times out, allowing automatic recovery or Retry.
 
-EverythingMac shows a loading panel while the services start. The status bar reports progress once the first scan begins. Later launches load the saved index and replay filesystem changes.
+EverythingMac shows a loading panel while the services start. The status bar reports progress once the first scan begins. Later launches load the saved index and replay filesystem changes. Changing scope rebuilds the cache for the new roots; results from removed folders cannot be published by older requests.
 
 If macOS has disabled the app's background activity, EverythingMac links to
 `System Settings > General > Login Items & Extensions`, where its background
