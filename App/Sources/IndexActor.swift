@@ -2,11 +2,12 @@ import Foundation
 import CoreServices
 import IndexCore
 
-// Serializes all store access. Mutations (scan, reconcile) and reads (search)
-// never race because they run on this actor. The full-disk scan is COOPERATIVE:
-// it yields every few thousand files so queued reads (search, totalCount) and
-// progress callbacks interleave — the UI stays responsive and results stream in
-// as the index builds instead of the actor blocking for the whole scan.
+typealias IndexScanOperation = @Sendable ([String], ExcludeRules, [String: DirectoryIdentity],
+                                         (@Sendable (Int) -> Void)?) async -> ScanResult
+typealias IndexSaveOperation = @Sendable (FileStore, URL, UInt64, UInt64, [ScanIssue]) async -> Bool
+
+// Owns publication and mutable state. Filesystem scans and cache serialization
+// run through off-actor operations; completed snapshots publish atomically.
 actor IndexActor {
     private var store = FileStore()
     private let engine = QueryEngine()
@@ -14,6 +15,16 @@ actor IndexActor {
     private var componentIndexBuild: Task<(UInt64, ComponentSearchIndex), Never>?
     private var componentIndexGeneration: UInt64 = 0
     private var rules = ExcludeRules.defaults
+    private var scope = IndexScope.localVolumes
+    private var scanIssues: [ScanIssue] = []
+    private var scopeSettings = IndexScopeSettings(mode: .localVolumes, folders: [])
+    private var accessIssues: [ScanIssue] = []
+    private var monitoringState = IndexMonitoringState.inactive
+    private var accessResolutionRevision: UInt64 = 0
+    private let cacheOverride: URL?
+    private let scanFiles: IndexScanOperation
+    private let saveCache: IndexSaveOperation
+    private var publicationEpoch: UInt64 = 0
     // Rules the LIVE path reconciles with — the user rules plus the firmlink back-door /
     // network-mount exclusions the scan applies via effectiveRules(). Without these, a
     // live reconcile that ever sees a "/System/Volumes/Data/…" path (the Data volume's
@@ -46,6 +57,9 @@ actor IndexActor {
     private var revision: UInt64 = 0
 
     init() {
+        cacheOverride = nil
+        scanFiles = Self.scanFiles
+        saveCache = Self.saveCache
         if let data = UserDefaults.standard.data(forKey: "excludeRules"),
            let r = try? JSONDecoder().decode(ExcludeRules.self, from: data) {
             rules = r
@@ -55,20 +69,82 @@ actor IndexActor {
     /// Deterministic construction for service tests and scoped embedding. It avoids
     /// reading preferences or starting system services; callers explicitly supply the
     /// index snapshot and whether live reconciliation is allowed.
-    init(store: FileStore, rules: ExcludeRules, accessEnabled: Bool) {
+    init(store: FileStore, rules: ExcludeRules, accessEnabled: Bool, cacheURL: URL? = nil,
+         scan: @escaping IndexScanOperation = IndexActor.scanFiles,
+         save: @escaping IndexSaveOperation = IndexActor.saveCache) {
+        scanFiles = scan
+        saveCache = save
         self.store = store
         self.rules = rules
         self.liveRules = rules
         self.accessEnabled = accessEnabled
         self.hasPublishedSnapshot = true
+        let roots = (0..<store.count).map(UInt32.init).filter {
+            store.parent(of: $0) == FileStore.noParent
+        }.map { store.path(of: $0) }
+        self.scope = IndexScope(mode: .selectedFolders, roots: roots)
+        self.scopeSettings = IndexScopeSettings(mode: .selectedFolders, folders: roots)
+        self.cacheOverride = cacheURL ?? FileManager.default.temporaryDirectory
+            .appendingPathComponent("EverythingMacActorTests-\(UUID().uuidString)/index.idx")
+    }
+
+    nonisolated static func scanFiles(_ roots: [String], _ rules: ExcludeRules,
+                                      _ identities: [String: DirectoryIdentity],
+                                      _ progress: (@Sendable (Int) -> Void)?) async -> ScanResult {
+        await Task.detached(priority: .userInitiated) {
+            ParallelScanner.scan(roots: roots, rules: rules, identities: identities, progress: progress)
+        }.value
+    }
+
+    nonisolated static func saveCache(_ store: FileStore, _ url: URL, _ eventID: UInt64,
+                                      _ fingerprint: UInt64, _ issues: [ScanIssue]) async -> Bool {
+        await Task.detached(priority: .utility) {
+            do {
+                try IndexCache.save(store, to: url, lastEventID: eventID,
+                                    rulesFingerprint: fingerprint, issues: issues)
+                return true
+            } catch { return false }
+        }.value
     }
 
     var totalCount: Int { store.liveCount }
 
-    func serviceStatus(hasFullDiskAccess: Bool) -> ServiceStatus {
+    func serviceStatus(accessAvailable: Bool = true) -> ServiceStatus {
         ServiceStatus(totalCount: store.liveCount, revision: revision,
-                      scanning: isRescanning, hasFullDiskAccess: hasFullDiskAccess,
-                      ready: hasPublishedSnapshot)
+                      scanning: isRescanning, accessAvailable: accessAvailable,
+                      ready: hasPublishedSnapshot,
+                      coverage: IndexCoverage(scope: scopeSettings, issues: accessIssues + scanIssues,
+                                              monitoring: monitoringState))
+    }
+
+    func configureAccess(_ resolved: ResolvedIndexAccess) async {
+        guard resolved.revision >= accessResolutionRevision else { return }
+        accessResolutionRevision = resolved.revision
+        let changed = scope != resolved.scope || scopeSettings != resolved.settings
+        accessIssues = resolved.issues
+        scopeSettings = resolved.settings
+        guard accessEnabled else { scope = resolved.scope; return }
+        guard changed else { return }
+        accessGeneration &+= 1
+        publicationEpoch &+= 1
+        scope = resolved.scope
+        // Fence scans, detached searches, and staged writes before removing old coverage.
+        stopMonitor()
+        store = FileStore()
+        hasPublishedSnapshot = false
+        discardComponentIndex()
+        cachedQueryKey = nil
+        cachedIDs.removeAll()
+        visibleResultPaths.removeAll()
+        scanIssues.removeAll()
+        clearDeferredChanges()
+        try? FileManager.default.removeItem(at: cacheLocation())
+        revision &+= 1
+        onLiveChange?()
+        if accessEnabled {
+            await rescanAll()
+            await flush()
+        }
     }
 
     // ~/Library/Application Support/EverythingMac/index.idx
@@ -77,20 +153,22 @@ actor IndexActor {
             .appendingPathComponent("index.idx")
     }
 
+    private func cacheLocation() -> URL {
+        guard let cacheOverride else { return Self.cacheURL() }
+        try? FileManager.default.createDirectory(at: cacheOverride.deletingLastPathComponent(),
+                                                 withIntermediateDirectories: true,
+                                                 attributes: [.posixPermissions: 0o700])
+        return cacheOverride
+    }
+
     @discardableResult
     static func prepareApplicationSupportDirectory(
         fileManager: FileManager = .default,
         currentURL: URL = ServicePaths.applicationSupportURL,
         legacyURL: URL = ServicePaths.legacyApplicationSupportURL
     ) -> URL {
-        if !fileManager.fileExists(atPath: currentURL.path),
-           fileManager.fileExists(atPath: legacyURL.path) {
-            try? fileManager.moveItem(at: legacyURL, to: currentURL)
-        }
-        try? fileManager.createDirectory(at: currentURL, withIntermediateDirectories: true)
-        try? fileManager.setAttributes([.posixPermissions: 0o700],
-                                       ofItemAtPath: currentURL.path)
-        return currentURL
+        ServicePaths.prepareApplicationSupportDirectory(fileManager: fileManager,
+                                                         currentURL: currentURL, legacyURL: legacyURL)
     }
 
     func search(_ text: String, matchPath: Bool, caseInsensitive: Bool = true, wholeWord: Bool = false,
@@ -110,12 +188,15 @@ actor IndexActor {
                         isCancelled: @escaping @Sendable () -> Bool = { false }) async throws -> SearchResponse {
         guard hasPublishedSnapshot else { throw ServiceErrorCode.indexNotReady }
         guard accessEnabled else { throw ServiceErrorCode.permissionDenied }
+        let generation = publicationEpoch
         let query = Query(text: text, matchPath: matchPath, caseInsensitive: caseInsensitive,
                           wholeWord: wholeWord, usesRegularExpression: usesRegularExpression)
         try validate(query, caseInsensitive: caseInsensitive)
         if !interactive {
-            return try await searchSnapshot(query, sort: sort, ascending: ascending,
-                                            limit: limit, isCancelled: isCancelled)
+            let response = try await searchSnapshot(query, sort: sort, ascending: ascending,
+                                                    limit: limit, isCancelled: isCancelled)
+            guard generation == publicationEpoch else { throw ServiceErrorCode.cancelled }
+            return response
         }
         // Re-scan only when the query (not the sort) changed. The key folds in every
         // flag that changes which ids match — matchPath, case sensitivity, whole-word,
@@ -129,7 +210,8 @@ actor IndexActor {
             if query.isUnconstrained {
                 matches = engine.search(query, in: store, isCancelled: isCancelled)
             } else {
-                guard await prepareComponentIndex(isCancelled: isCancelled) else {
+                guard await prepareComponentIndex(isCancelled: isCancelled),
+                      generation == publicationEpoch else {
                     throw ServiceErrorCode.cancelled
                 }
                 matches = engine.search(query, in: store, componentIndex: componentIndex,
@@ -248,19 +330,7 @@ actor IndexActor {
     // itself touches the network (MNT_WAIT would refresh stats and could block on a
     // stalled mount). MNT_LOCAL is set only for filesystems stored on local media.
     static func nonLocalMountPaths() -> [String] {
-        var mntbuf: UnsafeMutablePointer<statfs>? = nil
-        let count = getmntinfo(&mntbuf, MNT_NOWAIT)
-        guard count > 0, let mntbuf else { return [] }
-        var out: [String] = []
-        for i in 0..<Int(count) {
-            var fs = mntbuf[i]
-            if (fs.f_flags & UInt32(MNT_LOCAL)) != 0 { continue } // local → index it
-            let path = withUnsafePointer(to: &fs.f_mntonname) {
-                $0.withMemoryRebound(to: CChar.self, capacity: Int(MAXPATHLEN)) { String(cString: $0) }
-            }
-            out.append(path)
-        }
-        return out
+        MountedVolumes.snapshot().filter { !$0.isLocal }.map(\.path)
     }
 
     // Rebuild the whole index from "/". The walk runs OFF the actor on a pool of
@@ -279,7 +349,7 @@ actor IndexActor {
         }
         guard !Task.isCancelled else { return }
         isRescanning = true
-        let scanGeneration = accessGeneration
+        var scanGeneration = accessGeneration
         defer {
             isRescanning = false
             let waiters = rescanWaiters
@@ -288,6 +358,7 @@ actor IndexActor {
         }
         repeat {
             rescanRequested = false
+            scanGeneration = accessGeneration
             // Take the checkpoint before stopping the stream. Events generated while the
             // scanner runs are replayed into the finished snapshot from this point.
             let checkpoint = UInt64(FSEventsGetCurrentEventId())
@@ -304,11 +375,22 @@ actor IndexActor {
             let effective = effectiveRules()
             liveRules = effective
             let prog = onProgress
-            let newStore = await Task.detached(priority: .userInitiated) {
-                ParallelScanner.scanWholeDisk(rules: effective) { count in prog?(count) }
-            }.value
-            guard accessEnabled, accessGeneration == scanGeneration, !Task.isCancelled else { return }
-            store = newStore
+            let roots = scope.roots
+            let identities = scope.identities
+            let epoch = publicationEpoch
+            let scanned = await scanFiles(roots, effective, identities, prog)
+            guard accessEnabled, !Task.isCancelled else { return }
+            if accessGeneration != scanGeneration || publicationEpoch != epoch {
+                rescanRequested = true
+                continue
+            }
+            store = scanned.store
+            scanIssues = scanned.issues
+            for issue in scanned.issues where issue.accessDenied { suppressPath(issue.path) }
+            for (path, identity) in identities where !ParallelScanner.rootMatches(path, identity: identity) {
+                suppressPath(path)
+                scanIssues.append(ScanIssue(path: path, errorCode: ENOENT))
+            }
             hasPublishedSnapshot = true
             beginComponentIndexBuild()
             revision &+= 1
@@ -327,20 +409,22 @@ actor IndexActor {
                  accessGeneration requestedGeneration: UInt64) async {
         guard requestedGeneration >= accessGeneration else { return }
         accessGeneration = requestedGeneration
+        publicationEpoch &+= 1
         accessEnabled = true
         self.onLiveChange = onLiveChange
         self.onProgress = onProgress
         liveRules = effectiveRules()   // before the monitor starts firing live reconciles
-        let url = Self.cacheURL()
-        let fingerprint = effectiveRules().fingerprint()
+        let url = cacheLocation()
+        let fingerprint = scope.fingerprint(rules: effectiveRules())
         // Use the cache only if it was built with the SAME exclusion rules now in
         // effect. Otherwise (e.g. an upgrade that turned dev-folder skipping on, or a
         // changed exclude list) the cached index disagrees with the active rules and
         // would keep serving folders that should now be hidden — rebuild instead.
-        if let (loaded, evid, savedFingerprint) = try? IndexCache.load(from: url),
+        if let (loaded, evid, savedFingerprint, issues) = try? IndexCache.loadSnapshot(from: url),
            savedFingerprint == fingerprint,
            !Self.isContaminated(loaded) {
             store = loaded
+            scanIssues = issues
             hasPublishedSnapshot = true
             beginComponentIndexBuild()
             revision &+= 1
@@ -350,7 +434,7 @@ actor IndexActor {
             await rescanAll()
             guard accessEnabled, requestedGeneration == accessGeneration,
                   !Task.isCancelled else { return }
-            try? IndexCache.save(store, to: url, lastEventID: lastEventID, rulesFingerprint: fingerprint)
+            await flush()
         }
     }
 
@@ -366,6 +450,8 @@ actor IndexActor {
 
     private func startMonitor() {
         stopMonitor()
+        guard !scope.roots.isEmpty else { return }
+        monitoringState = .starting
         let stream = AsyncStream<[LiveMonitor.FSChange]> { eventContinuation = $0 }
         eventConsumer = Task { [weak self] in
             for await changes in stream {
@@ -375,7 +461,11 @@ actor IndexActor {
         }
         let continuation = eventContinuation
         let m = LiveMonitor(onChanged: { changes in continuation?.yield(changes) })
-        guard m.start(paths: watchPaths(), sinceWhen: FSEventStreamEventId(lastEventID)) else {
+        // WatchRoot opens ancestor directories outside a selected folder's grant.
+        // Selected-root moves are instead detected by the access boundary's identity check.
+        guard m.start(paths: watchPaths(), sinceWhen: FSEventStreamEventId(lastEventID),
+                      watchRoot: scope.mode == .localVolumes) else {
+            monitoringState = .retrying
             eventContinuation?.finish()
             eventContinuation = nil
             eventConsumer?.cancel()
@@ -392,9 +482,12 @@ actor IndexActor {
         monitorRetry?.cancel()
         monitorRetry = nil
         monitor = m
+        monitoringState = .live
+        onLiveChange?()
     }
 
     private func stopMonitor() {
+        monitoringState = .inactive
         monitor?.stop()
         monitor = nil
         eventContinuation?.finish()
@@ -409,6 +502,7 @@ actor IndexActor {
         guard requestedGeneration >= accessGeneration else { return }
         accessGeneration = requestedGeneration
         accessEnabled = false
+        publicationEpoch &+= 1
         stopMonitor()
         pendingDirs.removeAll()
         pendingDeep.removeAll()
@@ -423,7 +517,7 @@ actor IndexActor {
         discardComponentIndex()
         cachedQueryKey = nil
         cachedIDs.removeAll()
-        try? FileManager.default.removeItem(at: Self.cacheURL())
+        try? FileManager.default.removeItem(at: cacheLocation())
     }
 
     // An FSEvents stream rooted at "/" only covers the boot volume's hierarchy
@@ -432,6 +526,7 @@ actor IndexActor {
     // on them (e.g. an external/secondary disk). The boot volume's own entry in
     // /Volumes is a symlink — lstat skips it (S_IFLNK), so it isn't double-watched.
     private func watchPaths() -> [String] {
+        guard scope.mode == .localVolumes else { return scope.roots }
         // "/" is the sealed, read-only System volume; the writable Data volume — home,
         // /Users, /private, /Applications — is mounted at /System/Volumes/Data, and its
         // live changes are NOT delivered through a "/" watch (only via slow coalesced
@@ -487,8 +582,12 @@ actor IndexActor {
         for c in changes {
             let p = LiveMonitor.canonicalEventPath(c.path)
             pendingMaxEventID = max(pendingMaxEventID, c.eventID)
-            if c.mountChanged {
+            if c.historyDropped { pendingFullRescan = true; continue }
+            guard validateRoot(containing: p) else { continue }
+            if c.mountChanged || (c.structural && scope.roots.contains(p)) {
                 pendingFullRescan = true
+            } else if !scope.contains(p) {
+                continue
             } else if c.mustScanSubtree {
                 pendingDirs.insert(p)
                 pendingDeep.insert(p)
@@ -503,7 +602,12 @@ actor IndexActor {
             }
         }
         // A drain is already pending or running — it will sweep up what we just added.
-        guard !drainScheduled, !draining else { return }
+        scheduleDrain()
+    }
+
+    private func scheduleDrain() {
+        guard !drainScheduled, !draining,
+              !pendingDirs.isEmpty || !pendingMetadata.isEmpty || pendingFullRescan else { return }
         drainScheduled = true
         Task { [weak self] in
             try? await Task.sleep(nanoseconds: 500_000_000) // coalesce a 0.5s burst
@@ -515,7 +619,8 @@ actor IndexActor {
         drainScheduled = false
         guard !draining else { return }
         draining = true
-        defer { draining = false }
+        defer { draining = false; scheduleDrain() }
+        let generation = accessGeneration
         var state = DrainState()
         // Loop until the backlog is empty so changes that arrive mid-drain aren't lost.
         while !pendingDirs.isEmpty || !pendingMetadata.isEmpty || pendingFullRescan {
@@ -523,7 +628,8 @@ actor IndexActor {
             let batch = takePendingBatch()
             processMetadata(batch.metadata, state: &state)
             if await processDirectories(batch.directories, deep: batch.deep,
-                                        state: &state) { return }
+                                        generation: generation, state: &state) { return }
+            guard generation == accessGeneration else { return }
             publishChanges(from: state)
             finishBatch(eventID: batch.eventID, state: state)
             state.resetForNextBatch()
@@ -571,7 +677,17 @@ actor IndexActor {
 
     private func processMetadata(_ paths: Set<String>, state: inout DrainState) {
         for path in paths {
-            switch LiveMonitor.refreshMetadataStatus(path: path, in: &store) {
+            guard scope.contains(path), validateRoot(containing: path) else { continue }
+            var failures: [ScanIssue] = []
+            let result = LiveMonitor.refreshMetadataStatus(path: path, in: &store,
+                                                          onIssue: { failures.append($0) })
+            if handleAccessFailures(failures) {
+                state.structuralChanged = true
+                deferredChanges.metadata.remove(path)
+                retryCounts.removeValue(forKey: "m:" + path)
+                continue
+            }
+            switch result {
             case .changed:
                 deferredChanges.metadata.remove(path)
                 retryCounts.removeValue(forKey: "m:" + path)
@@ -589,8 +705,10 @@ actor IndexActor {
     }
 
     private func processDirectories(_ directories: [String], deep: Set<String>,
+                                    generation: UInt64,
                                     state: inout DrainState) async -> Bool {
         for directory in directories {
+            guard scope.contains(directory), validateRoot(containing: directory) else { continue }
             let descend = deep.contains(directory) || deferredChanges.directories[directory] == true
             if descend, Self.isVolumeRoot(directory) {
                 await rescanAll()
@@ -599,18 +717,70 @@ actor IndexActor {
             }
             var stack = [directory]
             while let path = stack.popLast() {
+                guard scope.contains(path), validateRoot(containing: path) else { continue }
+                var failures: [ScanIssue] = []
                 let result = LiveMonitor.reconcileLevelStatus(
                     directory: path, in: &store, rules: liveRules, volID: 1,
                     descend: descend, newlyIndexedDirs: &state.newlyIndexed,
-                    pushChildDirsTo: &stack
+                    pushChildDirsTo: &stack, onIssue: { failures.append($0) }
                 )
-                applyDirectoryResult(result, path: path, descend: descend, state: &state)
+                let denied = handleAccessFailures(failures)
+                let unresolved = failures.contains { !$0.accessDenied && $0.errorCode != ENOENT && $0.errorCode != ENOTDIR }
+                applyDirectoryResult(denied && !unresolved ? .changed : result,
+                                     path: path, descend: descend, state: &state)
                 state.processed += 1
                 // Yield periodically so search and sort requests stay responsive.
-                if state.processed % 64 == 0 { await Task.yield() }
+                if state.processed % 64 == 0 {
+                    await Task.yield()
+                    guard generation == accessGeneration else { return true }
+                }
             }
         }
         return false
+    }
+
+    @discardableResult
+    private func handleAccessFailures(_ issues: [ScanIssue]) -> Bool {
+        let denied = issues.filter(\.accessDenied)
+        for issue in denied {
+            suppressPath(issue.path)
+            if !scanIssues.contains(issue), scanIssues.count < 100 { scanIssues.append(issue) }
+        }
+        return !denied.isEmpty
+    }
+
+    private func suppressPath(_ path: String) {
+        guard let root = store.idForDirPath(path) else { return }
+        publicationEpoch &+= 1
+        try? FileManager.default.removeItem(at: cacheLocation())
+        var pending = [root]
+        while let id = pending.popLast() {
+            pending += store.childIDs(of: id)
+            store.markDeleted(id)
+        }
+        cachedQueryKey = nil
+    }
+
+    private func validateRoot(containing path: String) -> Bool {
+        guard MountedVolumes.permitsInspection(path) else {
+            suppressPath(path)
+            let issue = ScanIssue(path: path, errorCode: ENOTSUP)
+            if !scanIssues.contains(issue), scanIssues.count < 100 { scanIssues.append(issue) }
+            revision &+= 1
+            onLiveChange?()
+            return false
+        }
+        for (root, identity) in scope.identities where IndexScope.contains(path, under: root) {
+            guard ParallelScanner.rootMatches(root, identity: identity) else {
+                suppressPath(root)
+                let issue = ScanIssue(path: root, errorCode: ENOENT)
+                if !scanIssues.contains(issue) { scanIssues.append(issue) }
+                revision &+= 1
+                onLiveChange?()
+                return false
+            }
+        }
+        return true
     }
 
     private func applyDirectoryResult(_ result: LiveMonitor.InspectionResult, path: String,
@@ -705,8 +875,12 @@ actor IndexActor {
         var newlyIndexed = Set<String>()
         var changed = false
         for dir in targets {
-            if LiveMonitor.reconcileStatus(directory: dir, in: &store, rules: liveRules, volID: 1,
-                                           newlyIndexedDirs: &newlyIndexed) == .changed { changed = true }
+            guard scope.contains(dir) else { continue }
+            var failures: [ScanIssue] = []
+            let result = LiveMonitor.reconcileStatus(directory: dir, in: &store, rules: liveRules, volID: 1,
+                                                     newlyIndexedDirs: &newlyIndexed,
+                                                     onIssue: { failures.append($0) })
+            if handleAccessFailures(failures) || result == .changed { changed = true }
         }
         guard changed else { return }
         cachedQueryKey = nil
@@ -714,9 +888,33 @@ actor IndexActor {
         onLiveChange?()
     }
 
+    func refreshUnavailablePaths() async {
+        guard !isRescanning else { return }
+        let denied = scanIssues.filter(\.accessDenied)
+        for issue in denied {
+            guard scope.contains(issue.path), validateRoot(containing: issue.path),
+                  MountedVolumes.permitsInspection(issue.path),
+                  Self.metadataAccessible(issue.path) else { continue }
+            await rescanAll()
+            await flush()
+            onLiveChange?()
+            return
+        }
+    }
+
+    private static func metadataAccessible(_ path: String) -> Bool {
+        var info = stat()
+        guard lstat(path, &info) == 0 else { return false }
+        guard (info.st_mode & S_IFMT) == S_IFDIR else { return true }
+        guard let directory = opendir(path) else { return false }
+        closedir(directory)
+        return true
+    }
+
     // Persist the current store and the highest event fully applied to it.
     func flush(accessGeneration expectedGeneration: UInt64? = nil) async {
         guard accessEnabled,
+              hasPublishedSnapshot,
               !saveInProgress,
               expectedGeneration == nil || expectedGeneration == accessGeneration else { return }
         // Bound in-memory churn without paying for an O(n) rebuild on every deletion.
@@ -735,26 +933,19 @@ actor IndexActor {
         // cache is written. Promote the staged file only if disk access is still valid.
         let snapshot = store
         let eventID = lastEventID
-        let fingerprint = effectiveRules().fingerprint()
-        let generation = accessGeneration
-        let finalURL = Self.cacheURL()
+        let fingerprint = scope.fingerprint(rules: effectiveRules())
+        let issues = scanIssues
+        let generation = publicationEpoch
+        let finalURL = cacheLocation()
         let stagingURL = finalURL.deletingLastPathComponent()
             .appendingPathComponent("index.\(UUID().uuidString).staging")
         saveInProgress = true
-        let saved = await Task.detached(priority: .utility) {
-            do {
-                try IndexCache.save(snapshot, to: stagingURL, lastEventID: eventID,
-                                    rulesFingerprint: fingerprint)
-                return true
-            } catch {
-                return false
-            }
-        }.value
+        let saved = await saveCache(snapshot, stagingURL, eventID, fingerprint, issues)
         defer {
             saveInProgress = false
             try? FileManager.default.removeItem(at: stagingURL)
         }
-        guard saved, accessEnabled, accessGeneration == generation else { return }
+        guard saved, accessEnabled, publicationEpoch == generation else { return }
         try? FileManager.default.removeItem(at: finalURL)
         try? FileManager.default.moveItem(at: stagingURL, to: finalURL)
     }

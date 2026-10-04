@@ -488,12 +488,12 @@ final class ServiceProtocolTests: XCTestCase {
 
     func testStatusSearchRequestAndResponseRoundTrip() throws {
         let status = ServiceStatus(totalCount: 42, revision: 7, scanning: true,
-                                   hasFullDiskAccess: false)
+                                   accessAvailable: false)
         let decodedStatus = try roundTrip(status)
         XCTAssertEqual(decodedStatus.totalCount, 42)
         XCTAssertEqual(decodedStatus.revision, 7)
         XCTAssertTrue(decodedStatus.scanning)
-        XCTAssertFalse(decodedStatus.hasFullDiskAccess)
+        XCTAssertFalse(decodedStatus.accessAvailable)
         XCTAssertFalse(decodedStatus.ready)
 
         let request = SearchRequest(text: "report", matchPath: true, caseInsensitive: false,
@@ -614,11 +614,11 @@ final class IndexActorBoundaryTests: XCTestCase {
         let actor = IndexActor()
         let initialCount = await actor.totalCount
         XCTAssertEqual(initialCount, 0)
-        let status = await actor.serviceStatus(hasFullDiskAccess: false)
+        let status = await actor.serviceStatus(accessAvailable: false)
         XCTAssertEqual(status.totalCount, 0)
         XCTAssertEqual(status.revision, 0)
         XCTAssertFalse(status.scanning)
-        XCTAssertFalse(status.hasFullDiskAccess)
+        XCTAssertFalse(status.accessAvailable)
         XCTAssertFalse(status.ready)
         let results = await actor.search("", matchPath: false, sort: .name, ascending: true)
         XCTAssertEqual(results, [])
@@ -626,7 +626,7 @@ final class IndexActorBoundaryTests: XCTestCase {
 
     func testPublishedEmptyIndexIsReadyAndNotTruncated() async throws {
         let actor = IndexActor(store: FileStore(), rules: ExcludeRules(), accessEnabled: true)
-        let status = await actor.serviceStatus(hasFullDiskAccess: true)
+        let status = await actor.serviceStatus()
         XCTAssertTrue(status.ready)
         XCTAssertEqual(status.totalCount, 0)
         let response = try await actor.searchResponse("missing", matchPath: false,
@@ -723,7 +723,7 @@ final class IndexActorBoundaryTests: XCTestCase {
     }
 
     func testSearchAndLiveReconcileAgainstScopedStore() async throws {
-        let root = FileManager.default.temporaryDirectory
+        let root = URL(fileURLWithPath: IndexScope.canonicalPath(FileManager.default.temporaryDirectory.path))
             .appendingPathComponent("EverythingMacActorTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: root) }
@@ -764,7 +764,7 @@ final class IndexActorBoundaryTests: XCTestCase {
             "added", matchPath: false, sort: .size, ascending: true
         )
         XCTAssertEqual(refreshed.first?.size, UInt64("a much larger added value".utf8.count))
-        let status = await actor.serviceStatus(hasFullDiskAccess: true)
+        let status = await actor.serviceStatus()
         XCTAssertGreaterThan(status.revision, 0)
     }
 }

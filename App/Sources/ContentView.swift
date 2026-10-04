@@ -35,7 +35,7 @@ struct ContentView: View {
             if accessState == .denied {
                 HStack {
                     Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
-                    Text("Grant Full Disk Access to EverythingMac.")
+                    Text("Folder access is unavailable. Choose folders to search.")
                     Spacer()
                     Button("Open Settings") {
                         refreshServicesAfterSettings = true
@@ -66,6 +66,13 @@ struct ContentView: View {
                 .background(.yellow.opacity(0.2))
                 Divider()
             }
+            if model.coverage?.monitoring == .retrying {
+                Text("Live filesystem updates are unavailable; the indexer is retrying.")
+                    .padding(8).frame(maxWidth: .infinity).background(.yellow.opacity(0.2))
+            } else if let issues = model.coverage?.issues, !issues.isEmpty {
+                Text("Some paths are unavailable. Review Settings > Scope.")
+                    .padding(8).frame(maxWidth: .infinity).background(.yellow.opacity(0.2))
+            }
             SearchField(text: $model.query,
                         matchPath: Binding(get: { model.matchPath }, set: { model.setMatchPath($0) }),
                         caseSensitive: Binding(get: { model.caseSensitive }, set: { model.setCaseSensitive($0) }),
@@ -81,7 +88,16 @@ struct ContentView: View {
                              onSelect: { model.select($0) },
                              onPreview: { model.togglePreview($0) },
                              onActivate: { ResultActions.open($0) })
-                if showsStartupProgress {
+                if model.accessAvailable, model.scopeSettings.mode == .selectedFolders,
+                   model.scopeSettings.folders.isEmpty, !model.scanning {
+                    ContentUnavailableView {
+                        Label("Choose folders to search", systemImage: "folder.badge.plus")
+                    } description: {
+                        Text("Search selected folders with live updates in the background.")
+                    } actions: {
+                        Button("Choose Folders…") { model.chooseFolders() }
+                    }
+                } else if showsStartupProgress {
                     HStack(spacing: 10) {
                         ProgressView()
                             .controlSize(.small)
@@ -130,7 +146,7 @@ struct ContentView: View {
 
     private func refreshAccess(restartServicesIfDenied: Bool = false) {
         Task {
-            let result = await model.refreshFullDiskAccess(
+            let result = await model.refreshServiceAccess(
                 restartServicesIfDenied: restartServicesIfDenied
             )
             switch result {

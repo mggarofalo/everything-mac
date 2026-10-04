@@ -17,16 +17,18 @@ public final class LiveMonitor: @unchecked Sendable {
         public let structural: Bool
         public let metadataChanged: Bool
         public let mountChanged: Bool
+        public let historyDropped: Bool
 
         public init(path: String, eventID: UInt64, mustScanSubtree: Bool,
                     structural: Bool = false, metadataChanged: Bool = false,
-                    mountChanged: Bool = false) {
+                    mountChanged: Bool = false, historyDropped: Bool = false) {
             self.path = path
             self.eventID = eventID
             self.mustScanSubtree = mustScanSubtree
             self.structural = structural
             self.metadataChanged = metadataChanged
             self.mountChanged = mountChanged
+            self.historyDropped = historyDropped
         }
     }
 
@@ -49,43 +51,61 @@ public final class LiveMonitor: @unchecked Sendable {
     @discardableResult
     public static func reconcileStatus(directory: String, in store: inout FileStore,
                                        rules: ExcludeRules, volID: UInt32,
-                                       newlyIndexedDirs: inout Set<String>) -> InspectionResult {
+                                       newlyIndexedDirs: inout Set<String>,
+                                       forceInspection: Bool = false,
+                                       onIssue: (ScanIssue) -> Void = { _ in }) -> InspectionResult {
         guard let dirID = store.idForDirPath(directory) else { return .noChange }
-        let diskMtime = directoryMtimeNanoseconds(directory)
-        if let diskMtime, diskMtime == store.reconcileMtime(of: dirID) { return .noChange }
-        let existing = store.childIDs(of: dirID)
-        guard let dir = opendir(directory) else {
-            return reconcileMissingDirectory(existing, in: &store)
+        let mounts = MountedVolumes.snapshot()
+        guard MountedVolumes.permitsInspection(directory, mounts: mounts) else {
+            onIssue(ScanIssue(path: directory, errorCode: ENOTSUP))
+            return .retry
         }
-        defer { closedir(dir) }
-        let snapshot = readDirectorySnapshot(dir)
+        let diskMtime = directoryMtimeNanoseconds(directory)
+        if canSkipInspection(force: forceInspection, mtime: diskMtime, stored: store.reconcileMtime(of: dirID)) { return .noChange }
+        let existing = store.childIDs(of: dirID)
+        let snapshot = DirectoryReader.read(directory, mounts: mounts)
+        if let error = snapshot.errorCode { onIssue(ScanIssue(path: directory, errorCode: error)) }
+        guard snapshot.opened else {
+            return reconcileMissingDirectory(existing, in: &store, errorCode: snapshot.errorCode ?? EIO)
+        }
+        let entries = inspectEntries(snapshot, directory: directory, parentID: dirID,
+                                     existing: existing, rules: rules, volID: volID,
+                                     store: &store, newlyIndexedDirs: &newlyIndexedDirs, onIssue: onIssue)
+        guard !entries.incomplete else { return .retry }
+        let changed = removeMissing(existing, onDisk: entries.onDisk, from: &store) || entries.changed
+        if let diskMtime { store.setReconcileMtime(dirID, diskMtime) }
+        return changed ? .changed : .noChange
+    }
+
+    private static func inspectEntries(_ snapshot: DirectoryReader.Snapshot, directory: String,
+                                       parentID: UInt32, existing: [UInt32], rules: ExcludeRules, volID: UInt32,
+                                       store: inout FileStore, newlyIndexedDirs: inout Set<String>,
+                                       onIssue: (ScanIssue) -> Void) ->
+        (onDisk: Set<String>, changed: Bool, incomplete: Bool) {
         let existingByName = childIDsByName(existing, in: store)
         var onDisk = Set<String>()
         var changed = false
-        var incompleteSnapshot = snapshot.incomplete
+        var incomplete = snapshot.errorCode != nil
         for name in snapshot.names {
-            switch reconcileEntry(name, directory: directory, parentID: dirID,
+            let path = directory == "/" ? "/" + name : directory + "/" + name
+            guard MountedVolumes.permitsInspection(path, mounts: snapshot.mounts) else { continue }
+            switch reconcileEntry(name, directory: directory, parentID: parentID,
                                   existingID: existingByName[name],
                                   inProjectDir: snapshot.inProjectDir, rules: rules,
                                   volID: volID, store: &store,
-                                  newlyIndexedDirs: &newlyIndexedDirs) {
+                                  newlyIndexedDirs: &newlyIndexedDirs, onIssue: onIssue) {
             case .excluded, .vanished: break
-            case .failed: incompleteSnapshot = true
+            case .failed: incomplete = true
             case .present(let entryChanged):
                 onDisk.insert(name)
                 changed = changed || entryChanged
             }
         }
-        if incompleteSnapshot { return .retry }
-        changed = removeMissing(existing, onDisk: onDisk, from: &store) || changed
-        if let diskMtime { store.setReconcileMtime(dirID, diskMtime) }
-        return changed ? .changed : .noChange
+        return (onDisk, changed, incomplete)
     }
 
-    private struct DirectorySnapshot {
-        let names: [String]
-        let inProjectDir: Bool
-        let incomplete: Bool
+    private static func canSkipInspection(force: Bool, mtime: Int64?, stored: Int64?) -> Bool {
+        !force && mtime != nil && mtime == stored
     }
 
     private enum EntryInspection {
@@ -105,33 +125,13 @@ public final class LiveMonitor: @unchecked Sendable {
     }
 
     private static func reconcileMissingDirectory(_ existing: [UInt32],
-                                                  in store: inout FileStore) -> InspectionResult {
+                                                  in store: inout FileStore, errorCode: Int32) -> InspectionResult {
         // Only absence proves that indexed children disappeared. Permission and other
         // transient failures must not turn a partial snapshot into durable deletions.
-        guard errno == ENOENT || errno == ENOTDIR else { return .retry }
+        guard errorCode == ENOENT || errorCode == ENOTDIR else { return .retry }
         guard !existing.isEmpty else { return .noChange }
         for id in existing { markSubtreeDeleted(id, in: &store) }
         return .changed
-    }
-
-    private static func readDirectorySnapshot(
-        _ directory: UnsafeMutablePointer<DIR>
-    ) -> DirectorySnapshot {
-        var names: [String] = []
-        var inProjectDir = false
-        errno = 0
-        while let entry = readdir(directory) {
-            let name = withUnsafePointer(to: entry.pointee.d_name) {
-                $0.withMemoryRebound(to: CChar.self, capacity: Int(NAME_MAX)) {
-                    String(cString: $0)
-                }
-            }
-            guard name != ".", name != ".." else { continue }
-            names.append(name)
-            if ExcludeRules.projectMarkers.contains(name) { inProjectDir = true }
-        }
-        return DirectorySnapshot(names: names, inProjectDir: inProjectDir,
-                                 incomplete: errno != 0)
     }
 
     private static func childIDsByName(_ ids: [UInt32],
@@ -142,14 +142,16 @@ public final class LiveMonitor: @unchecked Sendable {
     private static func reconcileEntry(
         _ name: String, directory: String, parentID: UInt32, existingID: UInt32?,
         inProjectDir: Bool, rules: ExcludeRules, volID: UInt32,
-        store: inout FileStore, newlyIndexedDirs: inout Set<String>
+        store: inout FileStore, newlyIndexedDirs: inout Set<String>, onIssue: (ScanIssue) -> Void
     ) -> EntryInspection {
         let fullPath = (directory as NSString).appendingPathComponent(name)
         if rules.shouldExclude(name: name, path: fullPath, isHidden: name.hasPrefix("."),
                                inProjectDir: inProjectDir) { return .excluded }
         var status = stat()
         guard lstat(fullPath, &status) == 0 else {
-            return errno == ENOENT || errno == ENOTDIR ? .vanished : .failed
+            let failure = errno
+            onIssue(ScanIssue(path: fullPath, errorCode: failure))
+            return failure == ENOENT || failure == ENOTDIR ? .vanished : .failed
         }
         let isDirectory = (status.st_mode & S_IFMT) == S_IFDIR
         if !isDirectory, rules.shouldExcludeFile(name: name) { return .excluded }
@@ -157,26 +159,26 @@ public final class LiveMonitor: @unchecked Sendable {
         guard let existingID else {
             appendEntry(name, at: fullPath, parentID: parentID, metadata: metadata,
                         isDirectory: isDirectory, rules: rules, volID: volID,
-                        store: &store, newlyIndexedDirs: &newlyIndexedDirs)
+                        store: &store, newlyIndexedDirs: &newlyIndexedDirs, onIssue: onIssue)
             return .present(changed: true)
         }
         return updateEntry(existingID, name: name, path: fullPath, parentID: parentID,
                            metadata: metadata, isDirectory: isDirectory, rules: rules,
                            volID: volID, store: &store,
-                           newlyIndexedDirs: &newlyIndexedDirs)
+                           newlyIndexedDirs: &newlyIndexedDirs, onIssue: onIssue)
     }
 
     private static func updateEntry(
         _ id: UInt32, name: String, path: String, parentID: UInt32,
         metadata: (size: UInt64, mtime: Int64), isDirectory: Bool,
         rules: ExcludeRules, volID: UInt32, store: inout FileStore,
-        newlyIndexedDirs: inout Set<String>
+        newlyIndexedDirs: inout Set<String>, onIssue: (ScanIssue) -> Void
     ) -> EntryInspection {
         if store.isDir(of: id) != isDirectory {
             markSubtreeDeleted(id, in: &store)
             appendEntry(name, at: path, parentID: parentID, metadata: metadata,
                         isDirectory: isDirectory, rules: rules, volID: volID,
-                        store: &store, newlyIndexedDirs: &newlyIndexedDirs)
+                        store: &store, newlyIndexedDirs: &newlyIndexedDirs, onIssue: onIssue)
             return .present(changed: true)
         }
         guard store.size(of: id) != metadata.size || store.mtime(of: id) != metadata.mtime else {
@@ -190,12 +192,12 @@ public final class LiveMonitor: @unchecked Sendable {
         _ name: String, at path: String, parentID: UInt32,
         metadata: (size: UInt64, mtime: Int64), isDirectory: Bool,
         rules: ExcludeRules, volID: UInt32, store: inout FileStore,
-        newlyIndexedDirs: inout Set<String>
+        newlyIndexedDirs: inout Set<String>, onIssue: (ScanIssue) -> Void
     ) {
         let id = store.append(name: name, parent: parentID, size: metadata.size,
                               mtime: metadata.mtime, isDir: isDirectory, volID: volID)
         guard isDirectory else { return }
-        Scanner(rules: rules).indexContents(of: path, under: id, into: &store, volID: volID)
+        Scanner(rules: rules).indexContents(of: path, under: id, into: &store, volID: volID, onIssue: onIssue)
         newlyIndexedDirs.insert(path)
     }
 
@@ -213,11 +215,18 @@ public final class LiveMonitor: @unchecked Sendable {
         refreshMetadataStatus(path: path, in: &store) == .changed
     }
 
-    public static func refreshMetadataStatus(path: String, in store: inout FileStore) -> InspectionResult {
+    public static func refreshMetadataStatus(path: String, in store: inout FileStore,
+                                             onIssue: (ScanIssue) -> Void = { _ in }) -> InspectionResult {
+        guard MountedVolumes.permitsInspection(path) else {
+            onIssue(ScanIssue(path: path, errorCode: ENOTSUP))
+            return .retry
+        }
         guard let id = store.idForDirPath(path), store.isLive(id) else { return .noChange }
         var st = stat()
         guard lstat(path, &st) == 0 else {
-            return errno == ENOENT || errno == ENOTDIR ? .noChange : .retry
+            let failure = errno
+            onIssue(ScanIssue(path: path, errorCode: failure))
+            return failure == ENOENT || failure == ENOTDIR ? .noChange : .retry
         }
         let isDir = (st.st_mode & S_IFMT) == S_IFDIR
         guard isDir == store.isDir(of: id) else { return .noChange }
@@ -259,9 +268,11 @@ public final class LiveMonitor: @unchecked Sendable {
     public static func reconcileLevelStatus(directory: String, in store: inout FileStore,
                                             rules: ExcludeRules, volID: UInt32, descend: Bool,
                                             newlyIndexedDirs: inout Set<String>,
-                                            pushChildDirsTo stack: inout [String]) -> InspectionResult {
+                                            pushChildDirsTo stack: inout [String],
+                                            onIssue: (ScanIssue) -> Void = { _ in }) -> InspectionResult {
         let result = reconcileStatus(directory: directory, in: &store, rules: rules, volID: volID,
-                                     newlyIndexedDirs: &newlyIndexedDirs)
+                                     newlyIndexedDirs: &newlyIndexedDirs,
+                                     forceInspection: descend, onIssue: onIssue)
         guard result != .retry, descend,
               let dirID = store.idForDirPath(directory) else { return result }
         // Snapshot of live child dirs after reconcile (includes any just appended).
@@ -281,10 +292,7 @@ public final class LiveMonitor: @unchecked Sendable {
     // indexing). Map a delivered Data-volume path back to its canonical form so
     // reconcile can resolve it against the store. Non-Data paths pass through.
     public static func canonicalEventPath(_ path: String) -> String {
-        let alias = "/System/Volumes/Data"
-        if path == alias { return "/" }
-        if path.hasPrefix(alias + "/") { return String(path.dropFirst(alias.count)) }
-        return path
+        IndexScope.canonicalPath(path)
     }
 
     private static func markSubtreeDeleted(_ id: UInt32, in store: inout FileStore) {
@@ -296,7 +304,8 @@ public final class LiveMonitor: @unchecked Sendable {
 
     @discardableResult
     public func start(paths: [String],
-                      sinceWhen: FSEventStreamEventId = FSEventStreamEventId(kFSEventStreamEventIdSinceNow)) -> Bool {
+                      sinceWhen: FSEventStreamEventId = FSEventStreamEventId(kFSEventStreamEventIdSinceNow),
+                      watchRoot: Bool = true) -> Bool {
         let info = Unmanaged.passUnretained(self).toOpaque()
         var ctx = FSEventStreamContext(version: 0, info: info, retain: nil, release: nil, copyDescription: nil)
         let cb: FSEventStreamCallback = { _, info, count, paths, flags, eventIDs in
@@ -317,6 +326,9 @@ public final class LiveMonitor: @unchecked Sendable {
             let mountMask = FSEventStreamEventFlags(
                 kFSEventStreamEventFlagMount | kFSEventStreamEventFlagUnmount |
                 kFSEventStreamEventFlagRootChanged)
+            let droppedMask = FSEventStreamEventFlags(
+                kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagKernelDropped |
+                kFSEventStreamEventFlagEventIdsWrapped)
             var changes: [FSChange] = []
             changes.reserveCapacity(count)
             for i in 0..<count {
@@ -326,7 +338,8 @@ public final class LiveMonitor: @unchecked Sendable {
                                         mustScanSubtree: (f & mustScan) != 0,
                                         structural: (f & structuralMask) != 0,
                                         metadataChanged: (f & metadataMask) != 0,
-                                        mountChanged: (f & mountMask) != 0))
+                                        mountChanged: (f & mountMask) != 0,
+                                        historyDropped: (f & droppedMask) != 0))
             }
             mon.onChanged(changes)
         }
@@ -336,7 +349,7 @@ public final class LiveMonitor: @unchecked Sendable {
         let flags = UInt32(kFSEventStreamCreateFlagNoDefer
                            | kFSEventStreamCreateFlagUseCFTypes
                            | kFSEventStreamCreateFlagFileEvents
-                           | kFSEventStreamCreateFlagWatchRoot)
+                           | (watchRoot ? kFSEventStreamCreateFlagWatchRoot : 0))
         stream = FSEventStreamCreate(nil, cb, &ctx, paths as CFArray, sinceWhen, 0.3, flags)
         if let s = stream {
             FSEventStreamSetDispatchQueue(s, DispatchQueue(label: "fsevents"))

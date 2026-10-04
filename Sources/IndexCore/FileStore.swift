@@ -24,6 +24,7 @@ public struct FileStore: Sendable {
     // dir id → last-reconciled mtime (ns). Derived, not serialized; see reconcileMtime.
     private var dirReconcileMtime: [UInt32: Int64] = [:]
     public private(set) var rootID: UInt32 = .max
+    private var rootIDs: [UInt32] = []
 
     // Count of tombstoned (deleted) records. Lets the empty-query path return the
     // whole id range directly when nothing's been deleted, instead of filtering
@@ -53,7 +54,7 @@ public struct FileStore: Sendable {
         flags.append(isDir ? 1 : 0)
         volIDs.append(volID)
         live.append(true)
-        if parent == Self.noParent { rootID = id }
+        if parent == Self.noParent { rootID = id; rootIDs.append(id) }
         else { childrenByParent[parent, default: []].append(id) }
         return id
     }
@@ -218,13 +219,14 @@ public struct FileStore: Sendable {
     // node's name is its full path ("/" for the app's whole-disk scan, or a temp
     // base path for a scoped Scanner), so we strip that prefix before walking.
     public func idForDirPath(_ path: String) -> UInt32? {
-        guard rootID != Self.noParent else { return nil }
-        let rootName = name(of: rootID)
-        if path == rootName { return rootID }
-        guard path.hasPrefix(rootName) else { return nil }
+        guard let root = rootIDs.first(where: {
+            isLive($0) && IndexScope.contains(path, under: name(of: $0))
+        }) else { return nil }
+        let rootName = name(of: root)
+        if path == rootName { return root }
         var rest = path.dropFirst(rootName.count)
         if rest.hasPrefix("/") { rest = rest.dropFirst() }   // unless rootName == "/"
-        var cur = rootID
+        var cur = root
         for comp in rest.split(separator: "/", omittingEmptySubsequences: true) {
             guard let next = childID(named: String(comp), under: cur) else { return nil }
             cur = next
@@ -359,10 +361,11 @@ public struct FileStore: Sendable {
         childrenByParent.removeAll(keepingCapacity: false)
         childrenByParent.reserveCapacity(parents.count / 4)
         rootID = Self.noParent
+        rootIDs.removeAll(keepingCapacity: false)
         deletedCount = 0
         for i in 0..<parents.count {
             let p = parents[i]
-            if p == Self.noParent { rootID = UInt32(i) }
+            if p == Self.noParent { rootID = UInt32(i); rootIDs.append(UInt32(i)) }
             else { childrenByParent[p, default: []].append(UInt32(i)) }
             if !live[i] { deletedCount += 1 }
         }

@@ -50,11 +50,13 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             SearchSettingsView()
                 .tabItem { Label("Search", systemImage: "magnifyingglass") }
+            IndexScopeSettingsView()
+                .tabItem { Label("Scope", systemImage: "folder") }
             ExcludeSettingsView(edit: edit, apply: apply,
-                                canApply: model.hasFullDiskAccess && !model.scanning)
+                                canApply: model.accessAvailable && !model.scanning)
                 .tabItem { Label("Exclude", systemImage: "nosign") }
             VolumesSettingsView(edit: edit, apply: apply,
-                                canApply: model.hasFullDiskAccess && !model.scanning)
+                                canApply: model.accessAvailable && !model.scanning)
                 .tabItem { Label("Volumes", systemImage: "externaldrive") }
         }
         .frame(width: 540, height: 480)

@@ -40,6 +40,14 @@ actor SearchClient {
 
     func currentStatus() async -> ServiceStatus? { try? await status() }
 
+    func scopeSettings() async throws -> IndexScopeSettings {
+        try await call(.getScope, payload: Optional<Bool>.none, as: IndexScopeSettings.self)
+    }
+
+    func setScope(_ update: IndexScopeUpdate) async throws -> IndexScopeSettings {
+        try await call(.setScope, payload: update, as: IndexScopeSettings.self)
+    }
+
     func automationAccessEnabled() async throws -> Bool {
         try await call(.getAutomationAccess, payload: Optional<Bool>.none, as: Bool.self)
     }

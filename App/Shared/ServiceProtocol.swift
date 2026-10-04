@@ -22,6 +22,8 @@ enum ServiceOperation: String, Codable, Sendable {
     case rebuild
     case getRules
     case setRules
+    case getScope
+    case setScope
     case getAutomationAccess
     case setAutomationAccess
 }
@@ -88,7 +90,7 @@ enum ServiceErrorCode: String, Codable, Sendable, Error {
     var message: String {
         switch self {
         case .invalidQuery: "Invalid query."
-        case .permissionDenied: "Full Disk Access is required."
+        case .permissionDenied: "Access to this operation or folder is not allowed."
         case .indexNotReady: "The index is not ready."
         case .cancelled: "Search was cancelled."
         case .internalError: "Internal service error."
@@ -102,16 +104,18 @@ struct ServiceStatus: Codable, Sendable {
     let totalCount: Int
     let revision: UInt64
     let scanning: Bool
-    let hasFullDiskAccess: Bool
+    let accessAvailable: Bool
     let ready: Bool
+    let coverage: IndexCoverage?
 
     init(totalCount: Int, revision: UInt64, scanning: Bool,
-         hasFullDiskAccess: Bool, ready: Bool = false) {
+         accessAvailable: Bool, ready: Bool = false, coverage: IndexCoverage? = nil) {
         self.totalCount = totalCount
         self.revision = revision
         self.scanning = scanning
-        self.hasFullDiskAccess = hasFullDiskAccess
+        self.accessAvailable = accessAvailable
         self.ready = ready
+        self.coverage = coverage
     }
 }
 
@@ -440,5 +444,20 @@ enum ServicePaths {
 
     static func cacheURL() -> URL {
         applicationSupportURL.appendingPathComponent("index.idx")
+    }
+
+    @discardableResult
+    static func prepareApplicationSupportDirectory(
+        fileManager: FileManager = .default,
+        currentURL: URL = applicationSupportURL,
+        legacyURL: URL = legacyApplicationSupportURL
+    ) -> URL {
+        if !fileManager.fileExists(atPath: currentURL.path),
+           fileManager.fileExists(atPath: legacyURL.path) {
+            try? fileManager.moveItem(at: legacyURL, to: currentURL)
+        }
+        try? fileManager.createDirectory(at: currentURL, withIntermediateDirectories: true)
+        try? fileManager.setAttributes([.posixPermissions: 0o700], ofItemAtPath: currentURL.path)
+        return currentURL
     }
 }

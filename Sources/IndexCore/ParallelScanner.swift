@@ -15,6 +15,7 @@ public enum ParallelScanner {
         private var store = FileStore()
         private let lock = NSLock()
         private var lastReported = 0
+        private var issues: [ScanIssue] = []
         private let progress: (@Sendable (Int) -> Void)?
 
         init(progress: (@Sendable (Int) -> Void)?) { self.progress = progress }
@@ -41,9 +42,14 @@ public enum ParallelScanner {
             return ids
         }
 
-        func finish() -> FileStore {
+        func recordIssue(path: String, errorCode: Int32) {
             lock.lock(); defer { lock.unlock() }
-            return store
+            if issues.count < 100 { issues.append(ScanIssue(path: path, errorCode: errorCode)) }
+        }
+
+        func finish() -> ScanResult {
+            lock.lock(); defer { lock.unlock() }
+            return ScanResult(store: store, issues: issues)
         }
     }
 
@@ -57,7 +63,7 @@ public enum ParallelScanner {
         private let lock = NSLock()
         private var active = 0
 
-        init(seed: (String, UInt32)) { stack.append(seed) }
+        init(seeds: [(String, UInt32)]) { stack = seeds }
 
         func push(_ items: [(String, UInt32)]) {
             guard !items.isEmpty else { return }
@@ -93,15 +99,29 @@ public enum ParallelScanner {
     /// traversing the machine's real root. Production uses `scanWholeDisk` above.
     static func scan(rootPath: String, rules: ExcludeRules, workerCount: Int,
                      progress: (@Sendable (Int) -> Void)? = nil) -> FileStore {
+        scan(roots: [rootPath], rules: rules, workerCount: workerCount, progress: progress).store
+    }
+
+    public static func scan(roots: [String], rules: ExcludeRules,
+                            identities: [String: DirectoryIdentity] = [:],
+                            workerCount: Int = max(2, ProcessInfo.processInfo.activeProcessorCount),
+                            progress: (@Sendable (Int) -> Void)? = nil) -> ScanResult {
         let builder = Builder(progress: progress)
-        let rootName = rootPath == "/" || !rootPath.hasSuffix("/")
-            ? rootPath : String(rootPath.dropLast())
-        let rootID = builder.appendRoot(name: rootName)
-        let queue = DirQueue(seed: (rootName, rootID))
+        let acceptedRoots = roots.filter { path in
+            guard let expected = identities[path] else { return true }
+            if rootMatches(path, identity: expected) { return true }
+            builder.recordIssue(path: path, errorCode: ENOENT)
+            return false
+        }
+        let seeds = acceptedRoots.map { path in
+            let name = path == "/" || !path.hasSuffix("/") ? path : String(path.dropLast())
+            return (name, builder.appendRoot(name: name))
+        }
+        let queue = DirQueue(seeds: seeds)
 
         DispatchQueue.concurrentPerform(iterations: max(1, workerCount)) { _ in
             while let (path, parent) = queue.claim() {
-                let entries = readDirectory(path, rules: rules)
+                let entries = readDirectory(path, rules: rules, builder: builder)
                 let ids = builder.appendChildren(entries, parent: parent)
                 var subdirs: [(String, UInt32)] = []
                 for (entry, id) in zip(entries, ids) where entry.isDir {
@@ -114,6 +134,13 @@ public enum ParallelScanner {
         return builder.finish()
     }
 
+    public static func rootMatches(_ path: String, identity: DirectoryIdentity) -> Bool {
+        guard MountedVolumes.permitsInspection(path) else { return false }
+        var info = stat()
+        guard lstat(path, &info) == 0, (info.st_mode & S_IFMT) == S_IFDIR else { return false }
+        return UInt64(info.st_dev) == identity.device && UInt64(info.st_ino) == identity.inode
+    }
+
     // One directory level: readdir + lstat each entry, applying exclude rules.
     // lstat (not stat) means symlinked directories are recorded but never
     // descended into, so the firmlink/symlink graph can't create scan loops.
@@ -123,27 +150,21 @@ public enum ParallelScanner {
     // applies the now-marker-aware exclude rules and stats only the survivors. The
     // marker pass is what lets generic names like "build"/"target" be skipped inside
     // a real project but kept for an unrelated user folder of the same name.
-    private static func readDirectory(_ path: String, rules: ExcludeRules) -> [Entry] {
-        guard let dir = opendir(path) else { return [] }
-        defer { closedir(dir) }
-        var names: [String] = []
-        var inProjectDir = false
-        while let entp = readdir(dir) {
-            let name = withUnsafePointer(to: entp.pointee.d_name) {
-                $0.withMemoryRebound(to: CChar.self, capacity: Int(NAME_MAX)) { String(cString: $0) }
-            }
-            if name == "." || name == ".." { continue }
-            names.append(name)
-            if ExcludeRules.projectMarkers.contains(name) { inProjectDir = true }
-        }
+    private static func readDirectory(_ path: String, rules: ExcludeRules, builder: Builder) -> [Entry] {
+        let snapshot = DirectoryReader.read(path)
+        if let error = snapshot.errorCode { builder.recordIssue(path: path, errorCode: error) }
         var out: [Entry] = []
-        out.reserveCapacity(names.count)
-        for name in names {
+        out.reserveCapacity(snapshot.names.count)
+        for name in snapshot.names {
             let full = path == "/" ? "/" + name : path + "/" + name
+            guard MountedVolumes.permitsInspection(full, mounts: snapshot.mounts) else { continue }
             let isHidden = name.hasPrefix(".")
-            if rules.shouldExclude(name: name, path: full, isHidden: isHidden, inProjectDir: inProjectDir) { continue }
+            if rules.shouldExclude(name: name, path: full, isHidden: isHidden, inProjectDir: snapshot.inProjectDir) { continue }
             var st = stat()
-            guard lstat(full, &st) == 0 else { continue }
+            guard lstat(full, &st) == 0 else {
+                builder.recordIssue(path: full, errorCode: errno)
+                continue
+            }
             let isDir = (st.st_mode & S_IFMT) == S_IFDIR
             // File-name exclude patterns apply to files only.
             if !isDir && rules.shouldExcludeFile(name: name) { continue }

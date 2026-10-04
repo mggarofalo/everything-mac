@@ -28,7 +28,10 @@ final class AppModel: ObservableObject {
     @Published var resultLimit = 5000
     @Published var rules: ExcludeRules = .defaults
     @Published var scanning = false
-    @Published private(set) var hasFullDiskAccess = false
+    @Published private(set) var accessAvailable = false
+    @Published private(set) var scopeSettings = IndexScopeSettings(mode: .selectedFolders, folders: [])
+    @Published private(set) var coverage: IndexCoverage?
+    @Published var scopeError: String?
     @Published var previewURL: URL?
     @Published var selectedPath: String?
     private(set) var selectedIdentity: ResultActions.ItemIdentity?
@@ -70,7 +73,7 @@ final class AppModel: ObservableObject {
         preferences = defaults
         self.index = index
     }
-    func refreshFullDiskAccess(
+    func refreshServiceAccess(
         restartServicesIfDenied: Bool = false
     ) async -> ServiceAccessState {
         if restartServicesIfDenied { restartAfterRefresh = true }
@@ -98,7 +101,7 @@ final class AppModel: ObservableObject {
         guard let status = await waitForServiceStatus() else {
             return await recoverBackgroundServices()
         }
-        if status.hasFullDiskAccess {
+        if status.accessAvailable {
             publish(status)
             return .granted
         }
@@ -149,18 +152,20 @@ final class AppModel: ObservableObject {
             return serviceFailureState
         }
         publish(status)
-        return status.hasFullDiskAccess ? .granted : .denied
+        return status.accessAvailable ? .granted : .denied
     }
 
     private func publish(_ status: ServiceStatus) {
-        updateFullDiskAccess(status.hasFullDiskAccess)
+        coverage = status.coverage
+        if let settings = status.coverage?.scope { scopeSettings = settings }
+        updateServiceAccess(status.accessAvailable)
         scanning = status.scanning
         total = status.totalCount
     }
 
-    func updateFullDiskAccess(_ granted: Bool) {
-        guard granted != hasFullDiskAccess || (granted && !didBootstrap) else { return }
-        hasFullDiskAccess = granted
+    func updateServiceAccess(_ granted: Bool) {
+        guard granted != accessAvailable || (granted && !didBootstrap) else { return }
+        accessAvailable = granted
         accessGeneration &+= 1
         let generation = accessGeneration
         if granted {
@@ -182,7 +187,7 @@ final class AppModel: ObservableObject {
     }
 
     private func bootstrap(generation: UInt64) {
-        guard !didBootstrap, hasFullDiskAccess else { return }
+        guard !didBootstrap, accessAvailable else { return }
         didBootstrap = true
         scanning = true
         loadPrefs()   // before the first runSearch so the initial query uses saved options
@@ -196,12 +201,13 @@ final class AppModel: ObservableObject {
                 },
                 accessGeneration: generation
             )
-            guard !Task.isCancelled, hasFullDiskAccess else { return }
+            guard !Task.isCancelled, accessAvailable else { return }
             if let status = await index.currentStatus() {
                 scanning = status.scanning
                 total = status.totalCount
             }
             rules = await index.currentRules()
+            if let settings = try? await index.scopeSettings() { scopeSettings = settings }
             await runSearch()
         }
     }
@@ -209,7 +215,7 @@ final class AppModel: ObservableObject {
     // Driven by the off-actor scan: flips into "indexing" mode and streams the
     // running count to the status bar as the new index builds.
     func onScanProgress(_ count: Int) {
-        guard hasFullDiskAccess, didBootstrap else { return }
+        guard accessAvailable, didBootstrap else { return }
         scanning = true
         total = count
         // No live search here: during the initial build the actor serves the OLD
@@ -301,8 +307,7 @@ final class AppModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 200_000_000)
             if Task.isCancelled { return }
             if let status = await index.currentStatus() {
-                scanning = status.scanning
-                total = status.totalCount
+                publish(status)
             }
             await runSearch()
         }
@@ -363,16 +368,16 @@ final class AppModel: ObservableObject {
     // but without changing the exclude rules — for when the index drifts or the user
     // wants to be sure it's fresh. Persists the result so the next launch matches.
     func rebuildIndex() {
-        guard hasFullDiskAccess, !scanning else { return }
+        guard accessAvailable, !scanning else { return }
         beginRebuild()
         let generation = accessGeneration
         maintenanceTask = Task {
             await index.cancelPendingSearch()
             await index.rescanAll(accessGeneration: generation)
-            guard !Task.isCancelled, hasFullDiskAccess,
+            guard !Task.isCancelled, accessAvailable,
                   generation == accessGeneration else { return }
             await index.flush(accessGeneration: generation)
-            guard !Task.isCancelled, hasFullDiskAccess,
+            guard !Task.isCancelled, accessAvailable,
                   generation == accessGeneration else { return }
             scanning = false
             total = await index.totalCount
@@ -381,22 +386,22 @@ final class AppModel: ObservableObject {
     }
 
     func applyRules(_ newRules: ExcludeRules) {
-        guard hasFullDiskAccess, !scanning else { return }
+        guard accessAvailable, !scanning else { return }
         beginRebuild()
         let generation = accessGeneration
         maintenanceTask = Task {
             await index.cancelPendingSearch()
             await index.setRules(newRules, accessGeneration: generation)
-            guard !Task.isCancelled, hasFullDiskAccess,
+            guard !Task.isCancelled, accessAvailable,
                   generation == accessGeneration else { return }
             rules = newRules
             await index.rescanAll(accessGeneration: generation)
-            guard !Task.isCancelled, hasFullDiskAccess,
+            guard !Task.isCancelled, accessAvailable,
                   generation == accessGeneration else { return }
             // Persist the freshly-rebuilt index with the new rules' fingerprint, so the
             // next launch sees a matching cache instead of rescanning again.
             await index.flush(accessGeneration: generation)
-            guard !Task.isCancelled, hasFullDiskAccess,
+            guard !Task.isCancelled, accessAvailable,
                   generation == accessGeneration else { return }
             scanning = false
             total = await index.totalCount
@@ -412,5 +417,38 @@ final class AppModel: ObservableObject {
         total = 0
         selectedPath = nil
         selectedIdentity = nil
+    }
+
+    func chooseFolders() {
+        do {
+            guard let bookmarks = try FolderSelection.chooseBookmarks() else { return }
+            changeScope(mode: .selectedFolders, retaining: scopeSettings.folders, adding: bookmarks)
+        } catch { scopeError = error.localizedDescription }
+    }
+
+    func changeScope(mode: IndexScope.Mode, retaining folders: [String], adding bookmarks: [Data] = []) {
+        beginRebuild()
+        // A prior request must not publish removed paths while the new scope is applied.
+        accessGeneration &+= 1
+        let generation = accessGeneration
+        maintenanceTask?.cancel()
+        maintenanceTask = Task {
+            await index.cancelPendingSearch()
+            do {
+                let settings = try await index.setScope(IndexScopeUpdate(
+                    mode: mode, retainedFolders: folders, addedBookmarks: bookmarks
+                ))
+                guard !Task.isCancelled, generation == accessGeneration else { return }
+                scopeSettings = settings
+                scopeError = nil
+            } catch {
+                guard !Task.isCancelled, generation == accessGeneration else { return }
+                scopeError = error.localizedDescription
+            }
+            if let status = await index.currentStatus() { publish(status) }
+            guard !Task.isCancelled, generation == accessGeneration else { return }
+            scanning = false
+            await runSearch()
+        }
     }
 }
